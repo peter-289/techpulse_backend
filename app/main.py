@@ -24,6 +24,7 @@ from app.api.v1.admin import router as admin_router
 from app.api.v1.analytics import router as analytics_router
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 # Initialize app
 app = FastAPI(
@@ -37,7 +38,16 @@ register_exception_handlers(app)
 
 
 # CORS configuration
-origins = [origin.strip() for origin in settings.FRONTEND_URL.split(",") if origin.strip()]
+def _normalize_origins(raw_origins: str) -> list[str]:
+    normalized: list[str] = []
+    for origin in raw_origins.split(","):
+        clean = origin.strip().rstrip("/")
+        if clean and clean not in normalized:
+            normalized.append(clean)
+    return normalized
+
+
+origins = _normalize_origins(settings.FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +62,7 @@ app.add_middleware(AuditMiddleware)
 # Ensure crucial services are on on startup.
 @app.on_event("startup")
 async def startup():
+      logger.info("[startup] Effective CORS origins: %s", origins or ["http://localhost:3000"])
       settings.validate_security()
       init_db()
       db = SessionLocal()

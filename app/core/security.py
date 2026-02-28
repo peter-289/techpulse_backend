@@ -42,7 +42,7 @@ def create_email_verification_token(user_id: int)->str:
     """Creates an email verification token"""
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.EMAIL_TOKEN_EXPIRE_MINUTES)
-    
+    # Payload includes user ID, expiration time, issued at time, purpose, and issuer
     payload = {
         "sub": str(user_id),
         "exp": expire,
@@ -53,7 +53,7 @@ def create_email_verification_token(user_id: int)->str:
     token = jwt.encode(payload, settings.EMAIL_VERIFY_SECRET, algorithm=settings.ALGORITHM)
     return token
 
-
+# Create password reset token
 def create_password_reset_token(user_id: int) -> str:
     """Creates a password reset token."""
     now = datetime.now(timezone.utc)
@@ -74,7 +74,7 @@ def get_current_user(
         token: str = Depends(oauth2_scheme),
 ):
     try:
-
+        
         if not token:
             token = request.cookies.get(settings.ACCESS_COOKIE_NAME)
         if not token:
@@ -93,7 +93,6 @@ def get_current_user(
         "role": role
     }
 
-
 def get_current_user_optional(request: Request) -> dict | None:
     token = request.cookies.get(settings.ACCESS_COOKIE_NAME) if request else None
     if not token:
@@ -108,7 +107,9 @@ def get_current_user_optional(request: Request) -> dict | None:
         role = payload.get("role")
         if not user_id or not role:
             return None
-        return {"user_id": int(user_id), "role": str(role)}
+        return {"user_id": int(user_id),
+                 "role": str(role)
+                 }
     except (JWTError, ValueError, TypeError):
         return None
 
@@ -160,7 +161,7 @@ def get_password_reset_user(token: str):
         raise credentials_exception
     return {"user_id": int(user_id), "jti": jti, "purpose": purpose, "exp": exp}
 
-
+# Consume password reset token to prevent replay attacks
 def consume_password_reset_token(token: str, exp: int | float | datetime) -> bool:
     """Marks a reset token as used so it cannot be replayed."""
     if isinstance(exp, datetime):
