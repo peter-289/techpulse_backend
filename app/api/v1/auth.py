@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -18,6 +19,7 @@ router = APIRouter(
     tags=["Authentication"]
 
 )
+logger = logging.getLogger(__name__)
 
 # Get auth service
 def get_service(session: Session = Depends(get_db))->AuthService:
@@ -114,6 +116,16 @@ def login(
     request.state.audit_actor_user_id = user.id
     # Set cookies
     _set_auth_cookies(response, access_token, refresh_token)
+    logger.info(
+        "[auth.login] user_id=%s origin=%s set_cookies=%s secure=%s samesite=%s domain=%s refresh_path=%s",
+        user.id,
+        request.headers.get("origin"),
+        [settings.ACCESS_COOKIE_NAME, settings.REFRESH_COOKIE_NAME],
+        settings.COOKIE_SECURE,
+        settings.COOKIE_SAMESITE,
+        settings.COOKIE_DOMAIN,
+        settings.REFRESH_COOKIE_PATH,
+    )
     payload = {
         "user_id": user.id,
         "token_type": "bearer",
@@ -137,7 +149,14 @@ def refresh_session(
         window_seconds=settings.AUTH_REFRESH_WINDOW_SECONDS,
     )
     # Get refresh token from cookie
+    has_access_cookie = bool(request.cookies.get(settings.ACCESS_COOKIE_NAME)) if request else False
     refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME) if request else None
+    logger.info(
+        "[auth.refresh] origin=%s has_access_cookie=%s has_refresh_cookie=%s",
+        request.headers.get("origin"),
+        has_access_cookie,
+        bool(refresh_token),
+    )
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
 
@@ -149,6 +168,10 @@ def refresh_session(
         ip_address=ip_address,
     )
     _set_auth_cookies(response, access_token, new_refresh)
+    logger.info(
+        "[auth.refresh] user_id=%s rotated_refresh_cookie=true",
+        user.id,
+    )
     payload = {
         "user_id": user.id,
         "token_type": "bearer",
