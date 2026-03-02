@@ -38,7 +38,10 @@ def register_user(
     ):
     user = service.create_user(payload)
     try:
-        auth_service.enqueue_verification_email(background_tasks, payload=user)
+        # auth_service.enqueue_verification_email(background_tasks, payload=user)
+        pass
+        logger.info("User registered successfully", extra={"user_id": user.id, "email": user.email})
+        logger.warning("Email verification is currently disabled, skipping email queueing", extra={"user_id": user.id})
     except DomainError as exc:
         logger.warning("Failed to queue verification email", extra={"user_id": user.id, "error": str(exc)})
     return user

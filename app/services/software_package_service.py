@@ -290,133 +290,146 @@ class SoftwarePackageService:
         checksum: str,
         size_bytes: int,
     ) -> int:
-        with self.uow:
-            session = self.uow.software_package_repo.get_upload_session_for_user_for_update(
-                upload_id=upload_id, user_id=user_id
-            )
-            if not session:
-                raise NotFoundError("Upload session not found")
-            if session.status == "COMPLETED":
-                if session.completed_file_version_id is None:
-                    raise ConflictError("Upload already completed with missing version reference")
-                return session.completed_file_version_id
-            if session.status == "FAILED":
-                raise ConflictError("Upload session failed and cannot be completed")
-            if session.status == "FINALIZING":
-                raise ConflictError("Upload session is already finalizing")
-            session.status = "FINALIZING"
-            if session.bytes_received <= 0:
+        try:
+            with self.uow:
+                session = self.uow.software_package_repo.get_upload_session_for_user_for_update(
+                    upload_id=upload_id, user_id=user_id
+                )
+                if not session:
+                    raise NotFoundError("Upload session not found")
+                if session.status == "COMPLETED":
+                    if session.completed_file_version_id is None:
+                        raise ConflictError("Upload already completed with missing version reference")
+                    return session.completed_file_version_id
+                if session.status == "FAILED":
+                    raise ConflictError("Upload session failed and cannot be completed")
+                if session.status == "FINALIZING":
+                    raise ConflictError("Upload session is already finalizing")
+                session.status = "FINALIZING"
+                if session.bytes_received <= 0:
+                    raise ValidationError("Upload contains no data")
+
+                package_name = session.package_name
+                package_description = session.package_description
+                package_category = session.package_category
+                package_language = session.package_language
+                package_version = session.package_version
+                is_public = session.is_public
+                file_name = session.file_name
+                content_type = session.content_type
+                max_size_bytes = session.max_size_bytes
+
+            if size_bytes <= 0:
                 raise ValidationError("Upload contains no data")
+            if size_bytes > max_size_bytes:
+                raise ValidationError("Upload exceeds maximum allowed file size")
 
-            package_name = session.package_name
-            package_description = session.package_description
-            package_category = session.package_category
-            package_language = session.package_language
-            package_version = session.package_version
-            is_public = session.is_public
-            file_name = session.file_name
-            content_type = session.content_type
-            max_size_bytes = session.max_size_bytes
-
-        if size_bytes <= 0:
-            raise ValidationError("Upload contains no data")
-        if size_bytes > max_size_bytes:
-            raise ValidationError("Upload exceeds maximum allowed file size")
-
-        version_draft = FileVersionDraft(
-            version=package_version,
-            checksum_sha256=checksum,
-            size_bytes=size_bytes,
-        )
-        version_draft.validate()
-
-        await self.scanner.scan_stream(
-            self.storage.stream_upload(upload_id, chunk_size=settings.PACKAGE_UPLOAD_CHUNK_SIZE_BYTES),
-            filename=file_name,
-            content_type=content_type,
-        )
-
-        storage_key = self._build_storage_key(checksum_sha256=checksum)
-
-        with self.uow:
-            repo = self.uow.software_package_repo
-            current_usage = repo.get_total_uploaded_bytes_for_user(user_id)
-            if current_usage + size_bytes > self.user_quota_bytes:
-                raise ValidationError("Storage quota exceeded")
-
-        blob = None
-        with self.uow:
-            blob = self.uow.software_package_repo.get_blob_by_checksum_and_size(
+            version_draft = FileVersionDraft(
+                version=package_version,
                 checksum_sha256=checksum,
                 size_bytes=size_bytes,
             )
-            if blob:
-                self.uow.software_package_repo.increment_blob_refcount(blob)
+            version_draft.validate()
 
-        if not blob:
-            await self.storage.promote_upload(upload_id, storage_key)
-            try:
-                with self.uow:
-                    blob = self.uow.software_package_repo.get_blob_by_checksum_and_size(
-                        checksum_sha256=checksum,
-                        size_bytes=size_bytes,
-                    )
-                    if blob:
-                        self.uow.software_package_repo.increment_blob_refcount(blob)
-                    else:
-                        blob = self.uow.software_package_repo.add_blob(
+            await self.scanner.scan_stream(
+                self.storage.stream_upload(upload_id, chunk_size=settings.PACKAGE_UPLOAD_CHUNK_SIZE_BYTES),
+                filename=file_name,
+                content_type=content_type,
+            )
+
+            storage_key = self._build_storage_key(checksum_sha256=checksum)
+
+            with self.uow:
+                repo = self.uow.software_package_repo
+                current_usage = repo.get_total_uploaded_bytes_for_user(user_id)
+                if current_usage + size_bytes > self.user_quota_bytes:
+                    raise ValidationError("Storage quota exceeded")
+
+            blob = None
+            with self.uow:
+                blob = self.uow.software_package_repo.get_blob_by_checksum_and_size(
+                    checksum_sha256=checksum,
+                    size_bytes=size_bytes,
+                )
+                if blob:
+                    self.uow.software_package_repo.increment_blob_refcount(blob)
+
+            if not blob:
+                await self.storage.promote_upload(upload_id, storage_key)
+                try:
+                    with self.uow:
+                        blob = self.uow.software_package_repo.get_blob_by_checksum_and_size(
                             checksum_sha256=checksum,
                             size_bytes=size_bytes,
-                            storage_key=storage_key,
                         )
-            except IntegrityError as exc:
-                raise ConflictError("Blob consistency conflict") from exc
-        else:
-            await self.storage.abort_upload(upload_id)
+                        if blob:
+                            self.uow.software_package_repo.increment_blob_refcount(blob)
+                        else:
+                            blob = self.uow.software_package_repo.add_blob(
+                                checksum_sha256=checksum,
+                                size_bytes=size_bytes,
+                                storage_key=storage_key,
+                            )
+                except IntegrityError as exc:
+                    raise ConflictError("Blob consistency conflict") from exc
+            else:
+                await self.storage.abort_upload(upload_id)
 
-        try:
+            try:
+                with self.uow:
+                    repo = self.uow.software_package_repo
+                    package = repo.upsert_package(
+                        owner_id=user_id,
+                        name=package_name,
+                        description=package_description,
+                        category=package_category,
+                        language=package_language,
+                        is_public=is_public,
+                        latest_version=package_version,
+                    )
+                    version_row = repo.add_file_version(
+                        package_id=package.id,
+                        blob_id=blob.id,
+                        file_name=file_name,
+                        content_type=content_type,
+                        version=package_version,
+                        size_bytes=size_bytes,
+                        checksum_sha256=checksum,
+                    )
+                    session = repo.get_upload_session_for_user_for_update(upload_id=upload_id, user_id=user_id)
+                    if not session:
+                        raise NotFoundError("Upload session not found")
+                    session.status = "COMPLETED"
+                    session.completed_file_version_id = version_row.id
+                    session.error_message = None
+                    return version_row.id
+            except IntegrityError as exc:
+                with self.uow:
+                    repo = self.uow.software_package_repo
+                    dup_blob = repo.get_blob_by_checksum_and_size(checksum_sha256=checksum, size_bytes=size_bytes)
+                    if dup_blob and dup_blob.id == blob.id:
+                        repo.decrement_blob_refcount(dup_blob)
+                    failed = repo.get_upload_session_for_user_for_update(upload_id=upload_id, user_id=user_id)
+                    if failed:
+                        failed.status = "FAILED"
+                        failed.error_message = "Version already exists for this package"
+                raise ConflictError("Package version already exists") from exc
+        except (ConflictError, NotFoundError):
+            raise
+        except Exception as exc:
             with self.uow:
-                repo = self.uow.software_package_repo
-                package = repo.upsert_package(
-                    owner_id=user_id,
-                    name=package_name,
-                    description=package_description,
-                    category=package_category,
-                    language=package_language,
-                    is_public=is_public,
-                    latest_version=package_version,
+                failed = self.uow.software_package_repo.get_upload_session_for_user_for_update(
+                    upload_id=upload_id, user_id=user_id
                 )
-                version_row = repo.add_file_version(
-                    package_id=package.id,
-                    blob_id=blob.id,
-                    file_name=file_name,
-                    content_type=content_type,
-                    version=package_version,
-                    size_bytes=size_bytes,
-                    checksum_sha256=checksum,
-                )
-                session = repo.get_upload_session_for_user_for_update(upload_id=upload_id, user_id=user_id)
-                if not session:
-                    raise NotFoundError("Upload session not found")
-                session.status = "COMPLETED"
-                session.completed_file_version_id = version_row.id
-                session.error_message = None
-                return version_row.id
-        except IntegrityError as exc:
-            with self.uow:
-                repo = self.uow.software_package_repo
-                dup_blob = repo.get_blob_by_checksum_and_size(checksum_sha256=checksum, size_bytes=size_bytes)
-                if dup_blob and dup_blob.id == blob.id:
-                    repo.decrement_blob_refcount(dup_blob)
-                failed = repo.get_upload_session_for_user_for_update(upload_id=upload_id, user_id=user_id)
-                if failed:
+                if failed and failed.status != "COMPLETED":
                     failed.status = "FAILED"
-                    failed.error_message = "Version already exists for this package"
-            raise ConflictError("Package version already exists") from exc
+                    failed.error_message = "Upload finalize failed"
+            raise exc
 
     def list_packages(self, *, user_id: int, offset: int = 0, limit: int = 50, language: str | None = None):
         with self.uow:
             return self.uow.software_package_repo.list_packages(
+                user_id=user_id,
                 offset=offset,
                 limit=limit,
                 language=language,
@@ -434,7 +447,19 @@ class SoftwarePackageService:
             package = repo.get_package_by_id(package_id)
             if not package:
                 raise NotFoundError("Package not found")
+            if not package.is_public and package.owner_id != user_id:
+                raise PermissionError("You do not have access to this package")
             return repo.list_file_versions_for_package(package_id=package_id, limit=limit)
+
+    def fail_upload_session(self, *, upload_id: str, user_id: int, error_message: str) -> None:
+        with self.uow:
+            session = self.uow.software_package_repo.get_upload_session_for_user_for_update(
+                upload_id=upload_id, user_id=user_id
+            )
+            if not session or session.status == "COMPLETED":
+                return
+            session.status = "FAILED"
+            session.error_message = (error_message or "Upload initialization failed")[:500]
 
     def get_download_ticket(
         self,

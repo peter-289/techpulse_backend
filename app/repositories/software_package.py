@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.file_blob import FileBlob
@@ -61,11 +61,21 @@ class SoftwarePackageRepo:
     def list_packages(
         self,
         *,
+        user_id: int,
         offset: int = 0,
         limit: int = 50,
         language: str | None = None,
     ) -> list[SoftwarePackage]:
-        stmt = select(SoftwarePackage).order_by(SoftwarePackage.updated_at.desc())
+        stmt = (
+            select(SoftwarePackage)
+            .where(
+                or_(
+                    SoftwarePackage.is_public.is_(True),
+                    SoftwarePackage.owner_id == user_id,
+                )
+            )
+            .order_by(SoftwarePackage.updated_at.desc())
+        )
         if language:
             stmt = stmt.where(SoftwarePackage.language.ilike(f"%{language.strip()}%"))
         stmt = stmt.offset(offset).limit(limit)

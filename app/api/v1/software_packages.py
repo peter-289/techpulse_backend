@@ -138,7 +138,15 @@ async def init_upload_session(
         content_type=payload.content_type,
         max_size_bytes=payload.max_size_bytes,
     )
-    await service.storage.init_upload(initialized.upload_id)
+    try:
+        await service.storage.init_upload(initialized.upload_id)
+    except Exception as exc:
+        service.fail_upload_session(
+            upload_id=initialized.upload_id,
+            user_id=int(current_user["user_id"]),
+            error_message="Upload initialization failed",
+        )
+        raise HTTPException(status_code=500, detail="Unable to initialize upload session") from exc
     return UploadSessionInitResponse(
         upload_id=initialized.upload_id,
         offset=initialized.offset,
