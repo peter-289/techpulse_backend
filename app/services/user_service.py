@@ -26,8 +26,8 @@ class UserService:
             pass_hash = hash_password(payload.password)
             # Check for existing email
             existing_user = self.uow.user_repo.get_user_by_email(payload.email)
-            if not existing_user:
-                raise NotFoundError("User not found.")
+            if existing_user:
+                raise NotFoundError("User already exists.")
             if existing_user.email == payload.email:
                 raise ConflictError("Email already exists.")
             if existing_user.username == payload.username:
