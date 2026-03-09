@@ -59,10 +59,10 @@ class AppSettings(BaseSettings):
     # Email
     EMAIL_FROM: str = "no-reply@techpulse.local"
     EMAIL_SUBJECT: str = "Welcome to Tech Pulse"
-    SMTP_HOST: str = "localhost"
-    SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
-    SMTP_PASSWORD: str = ""
+    SMTP_HOST: str = "sandbox.smtp.mailtrap.io"
+    SMTP_PORT: int = 2525
+    SMTP_USERNAME: str = "60d6d7ce5e2666"
+    SMTP_PASSWORD: str = "2d361b7eddfd39"
     SMTP_USE_TLS: bool = True
     SMTP_USE_SSL: bool = False
     SMTP_VALIDATE_CERTS: bool = True
