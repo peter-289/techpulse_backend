@@ -65,14 +65,16 @@ class AuthService:
 
     # Verify user account by email
     def verify_user_account(self, token: str):
+        # Get user from email token, raise ValidationError if no user is found
         user = get_email_user(token=token)
         if not user:
             raise ValidationError("Invalid token")
         with self.uow:
+            # Fetch a user from db
             user_acc = self.uow.user_repo.get_user_by_id(user["user_id"])
             if not user_acc:
                 raise ValidationError("No account associated with user")
-            # Mark as verified
+            # Mark account as verified
             user_acc.status = UserStatus.VERIFIED
     
 

@@ -24,11 +24,13 @@ def _utc_now() -> datetime:
 @dataclass(frozen=True, slots=True)
 class LocalStorageConfig:
     root: Path
+    max_upload_size_bytes: int | None = None
 
 
 class LocalAsyncStorageService(StorageService):
     def __init__(self, config: LocalStorageConfig) -> None:
         self._root = config.root
+        self._max_upload_size_bytes = config.max_upload_size_bytes
         self._root.mkdir(parents=True, exist_ok=True)
 
     async def store_stream(
@@ -51,6 +53,11 @@ class LocalAsyncStorageService(StorageService):
                     if not chunk:
                         continue
                     total_bytes += len(chunk)
+                    if (
+                        self._max_upload_size_bytes is not None
+                        and total_bytes > self._max_upload_size_bytes
+                    ):
+                        raise ValidationError("upload exceeds maximum allowed size")
                     hasher.update(chunk)
                     await handle.write(chunk)
         except Exception:

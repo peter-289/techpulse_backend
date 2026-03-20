@@ -29,6 +29,26 @@ class PublishVersionResponse(BaseModel):
     software_row_version: int
 
 
+class DeprecateVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    software_id: UUID
+    version_id: UUID
+    version: str
+    deprecated_at: datetime
+    software_row_version: int
+
+
+class RevokeVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    software_id: UUID
+    version_id: UUID
+    version: str
+    revoked_at: datetime
+    software_row_version: int
+
+
 class DeleteSoftwareResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

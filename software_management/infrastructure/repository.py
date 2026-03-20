@@ -14,18 +14,27 @@ from software_management.application.interfaces import (
     CreateVersionCommand,
     CreateVersionResult,
     DeleteSoftwareResult,
+    DeprecateVersionResult,
     DownloadDescriptor,
+    IdempotencyRecord,
     PublishVersionResult,
+    RevokeVersionResult,
     SoftwareListRecord,
     SoftwareRepository,
     VersionListRecord,
 )
 
-from .models import ArtifactModel, SoftwareModel, VersionModel
+from .models import ArtifactModel, IdempotencyKeyModel, SoftwareModel, VersionModel
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+_STATUS_DRAFT = "DRAFT"
+_STATUS_PUBLISHED = "PUBLISHED"
+_STATUS_DEPRECATED = "DEPRECATED"
+_STATUS_REVOKED = "REVOKED"
 
 
 class SQLAlchemySoftwareRepository(SoftwareRepository):
@@ -59,14 +68,19 @@ class SQLAlchemySoftwareRepository(SoftwareRepository):
                         artifact_id=artifact.id,
                         version=command.version,
                         is_published=command.publish_now,
+                        status=_STATUS_PUBLISHED if command.publish_now else _STATUS_DRAFT,
                         download_count=0,
                         created_at=now,
                         published_at=now if command.publish_now else None,
+                        deprecated_at=None,
+                        revoked_at=None,
                     )
                     session.add(version)
-
+                    await session.flush()
                     software.row_version += 1
                     software.updated_at = now
+                    if command.publish_now:
+                        software.current_version_id = version.id
                     await session.flush()
                     return CreateVersionResult(
                         software_id=software.id,
@@ -111,13 +125,23 @@ class SQLAlchemySoftwareRepository(SoftwareRepository):
                 version_row = (await session.execute(version_stmt)).scalar_one_or_none()
                 if version_row is None:
                     raise NotFoundError("software version not found")
-                if version_row.is_published:
+                if version_row.status == _STATUS_PUBLISHED:
                     raise ConflictError("software version already published")
+                if version_row.status == _STATUS_DEPRECATED:
+                    raise ConflictError("software version is deprecated")
+                if version_row.status == _STATUS_REVOKED:
+                    raise ConflictError("software version is revoked")
+                if version_row.status != _STATUS_DRAFT:
+                    raise ConflictError("software version cannot be published")
 
+                version_row.status = _STATUS_PUBLISHED
                 version_row.is_published = True
                 version_row.published_at = now
+                version_row.deprecated_at = None
+                version_row.revoked_at = None
                 software.row_version += 1
                 software.updated_at = now
+                software.current_version_id = version_row.id
                 await session.flush()
                 return PublishVersionResult(
                     software_id=software.id,
@@ -128,36 +152,148 @@ class SQLAlchemySoftwareRepository(SoftwareRepository):
                     software_row_version=software.row_version,
                 )
 
-    async def get_download_descriptor(
-        self, software_id: UUID, version: str
-    ) -> DownloadDescriptor | None:
+    async def deprecate_version(
+        self,
+        actor_id: str,
+        software_id: UUID,
+        version: str,
+        expected_software_row_version: int | None = None,
+    ) -> DeprecateVersionResult:
+        now = _utc_now()
         async with self._sessionmaker() as session:
             async with session.begin():
-                stmt = (
-                    select(SoftwareModel, VersionModel, ArtifactModel)
-                    .join(VersionModel, VersionModel.software_id == SoftwareModel.id)
-                    .join(ArtifactModel, ArtifactModel.id == VersionModel.artifact_id)
-                    .where(SoftwareModel.id == software_id, VersionModel.version == version)
+                software_stmt = (
+                    select(SoftwareModel).where(SoftwareModel.id == software_id).with_for_update()
+                )
+                software = (await session.execute(software_stmt)).scalar_one_or_none()
+                if software is None:
+                    raise NotFoundError("software not found")
+                if software.owner_id != actor_id:
+                    raise ForbiddenError("actor cannot deprecate this software")
+                if (
+                    expected_software_row_version is not None
+                    and software.row_version != expected_software_row_version
+                ):
+                    raise ConflictError("software version conflict")
+
+                version_stmt = (
+                    select(VersionModel)
+                    .where(VersionModel.software_id == software.id, VersionModel.version == version)
                     .with_for_update()
                 )
-                row = (await session.execute(stmt)).one_or_none()
-                if row is None:
-                    return None
-                software, version_row, artifact = row
-                version_row.download_count += 1
+                version_row = (await session.execute(version_stmt)).scalar_one_or_none()
+                if version_row is None:
+                    raise NotFoundError("software version not found")
+                if version_row.status != _STATUS_PUBLISHED:
+                    raise ConflictError("software version is not published")
+
+                version_row.status = _STATUS_DEPRECATED
+                version_row.is_published = True
+                version_row.deprecated_at = now
+                software.row_version += 1
+                software.updated_at = now
                 await session.flush()
-                return DownloadDescriptor(
+                if software.current_version_id == version_row.id:
+                    await self._heal_current_version(session, software)
+                await session.flush()
+                return DeprecateVersionResult(
                     software_id=software.id,
                     version_id=version_row.id,
                     owner_id=software.owner_id,
                     version=version_row.version,
-                    published=version_row.is_published,
-                    file_name=artifact.file_name,
-                    content_type=artifact.content_type,
-                    size_bytes=artifact.size_bytes,
-                    file_hash=artifact.file_hash,
-                    storage_key=artifact.storage_key,
+                    deprecated_at=now,
+                    software_row_version=software.row_version,
                 )
+
+    async def revoke_version(
+        self,
+        actor_id: str,
+        software_id: UUID,
+        version: str,
+        expected_software_row_version: int | None = None,
+    ) -> RevokeVersionResult:
+        now = _utc_now()
+        async with self._sessionmaker() as session:
+            async with session.begin():
+                software_stmt = (
+                    select(SoftwareModel).where(SoftwareModel.id == software_id).with_for_update()
+                )
+                software = (await session.execute(software_stmt)).scalar_one_or_none()
+                if software is None:
+                    raise NotFoundError("software not found")
+                if software.owner_id != actor_id:
+                    raise ForbiddenError("actor cannot revoke this software")
+                if (
+                    expected_software_row_version is not None
+                    and software.row_version != expected_software_row_version
+                ):
+                    raise ConflictError("software version conflict")
+
+                version_stmt = (
+                    select(VersionModel)
+                    .where(VersionModel.software_id == software.id, VersionModel.version == version)
+                    .with_for_update()
+                )
+                version_row = (await session.execute(version_stmt)).scalar_one_or_none()
+                if version_row is None:
+                    raise NotFoundError("software version not found")
+                if version_row.status != _STATUS_DEPRECATED:
+                    raise ConflictError("software version must be deprecated before revoking")
+
+                version_row.status = _STATUS_REVOKED
+                version_row.is_published = False
+                version_row.revoked_at = now
+                software.row_version += 1
+                software.updated_at = now
+                await session.flush()
+                if software.current_version_id == version_row.id:
+                    await self._heal_current_version(session, software)
+                await session.flush()
+                return RevokeVersionResult(
+                    software_id=software.id,
+                    version_id=version_row.id,
+                    owner_id=software.owner_id,
+                    version=version_row.version,
+                    revoked_at=now,
+                    software_row_version=software.row_version,
+                )
+
+    async def get_download_descriptor(
+        self, software_id: UUID, version: str
+    ) -> DownloadDescriptor | None:
+        async with self._sessionmaker() as session:
+            stmt = (
+                select(SoftwareModel, VersionModel, ArtifactModel)
+                .join(VersionModel, VersionModel.software_id == SoftwareModel.id)
+                .join(ArtifactModel, ArtifactModel.id == VersionModel.artifact_id)
+                .where(SoftwareModel.id == software_id, VersionModel.version == version)
+            )
+            row = (await session.execute(stmt)).one_or_none()
+            if row is None:
+                return None
+            software, version_row, artifact = row
+            return DownloadDescriptor(
+                software_id=software.id,
+                version_id=version_row.id,
+                owner_id=software.owner_id,
+                version=version_row.version,
+                published=version_row.is_published,
+                file_name=artifact.file_name,
+                content_type=artifact.content_type,
+                size_bytes=artifact.size_bytes,
+                file_hash=artifact.file_hash,
+                storage_key=artifact.storage_key,
+            )
+
+    async def increment_download_count(self, version_id: UUID) -> None:
+        async with self._sessionmaker() as session:
+            async with session.begin():
+                stmt = select(VersionModel).where(VersionModel.id == version_id).with_for_update()
+                version_row = (await session.execute(stmt)).scalar_one_or_none()
+                if version_row is None:
+                    raise NotFoundError("software version not found")
+                version_row.download_count += 1
+                await session.flush()
 
     async def delete_software(
         self,
@@ -343,6 +479,65 @@ class SQLAlchemySoftwareRepository(SoftwareRepository):
             )
             for software, version_row in rows
         ]
+
+    async def get_idempotency_record(
+        self, scope: str, actor_id: str, key: str
+    ) -> IdempotencyRecord | None:
+        async with self._sessionmaker() as session:
+            stmt = select(IdempotencyKeyModel).where(
+                IdempotencyKeyModel.scope == scope,
+                IdempotencyKeyModel.actor_id == actor_id,
+                IdempotencyKeyModel.key == key,
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            return IdempotencyRecord(
+                scope=row.scope,
+                actor_id=row.actor_id,
+                key=row.key,
+                request_hash=row.request_hash,
+                response_json=row.response_json,
+                created_at=row.created_at,
+            )
+
+    async def store_idempotency_record(
+        self,
+        scope: str,
+        actor_id: str,
+        key: str,
+        request_hash: str,
+        response_json: str,
+    ) -> None:
+        try:
+            async with self._sessionmaker() as session:
+                async with session.begin():
+                    session.add(
+                        IdempotencyKeyModel(
+                            scope=scope,
+                            actor_id=actor_id,
+                            key=key,
+                            request_hash=request_hash,
+                            response_json=response_json,
+                            created_at=_utc_now(),
+                        )
+                    )
+                    await session.flush()
+        except IntegrityError as exc:
+            raise ConflictError("idempotency key already used") from exc
+
+    async def _heal_current_version(self, session, software: SoftwareModel) -> None:
+        stmt = (
+            select(VersionModel.id)
+            .where(
+                VersionModel.software_id == software.id,
+                VersionModel.status == _STATUS_PUBLISHED,
+            )
+            .order_by(VersionModel.published_at.desc(), VersionModel.created_at.desc())
+            .limit(1)
+        )
+        latest_id = (await session.execute(stmt)).scalar_one_or_none()
+        software.current_version_id = latest_id
 
     async def _resolve_software_for_write(
         self,

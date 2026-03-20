@@ -46,6 +46,36 @@ class PublishVersionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DeprecateVersionResult:
+    software_id: UUID
+    version_id: UUID
+    owner_id: str
+    version: str
+    deprecated_at: datetime
+    software_row_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeVersionResult:
+    software_id: UUID
+    version_id: UUID
+    owner_id: str
+    version: str
+    revoked_at: datetime
+    software_row_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyRecord:
+    scope: str
+    actor_id: str
+    key: str
+    request_hash: str
+    response_json: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class DownloadDescriptor:
     software_id: UUID
     version_id: UUID
@@ -133,9 +163,30 @@ class SoftwareRepository(Protocol):
     ) -> PublishVersionResult:
         ...
 
+    async def deprecate_version(
+        self,
+        actor_id: str,
+        software_id: UUID,
+        version: str,
+        expected_software_row_version: int | None = None,
+    ) -> DeprecateVersionResult:
+        ...
+
+    async def revoke_version(
+        self,
+        actor_id: str,
+        software_id: UUID,
+        version: str,
+        expected_software_row_version: int | None = None,
+    ) -> RevokeVersionResult:
+        ...
+
     async def get_download_descriptor(
         self, software_id: UUID, version: str
     ) -> DownloadDescriptor | None:
+        ...
+
+    async def increment_download_count(self, version_id: UUID) -> None:
         ...
 
     async def delete_software(
@@ -173,6 +224,21 @@ class SoftwareRepository(Protocol):
         offset: int = 0,
         limit: int = 100,
     ) -> list[AdminSoftwareRecord]:
+        ...
+
+    async def get_idempotency_record(
+        self, scope: str, actor_id: str, key: str
+    ) -> IdempotencyRecord | None:
+        ...
+
+    async def store_idempotency_record(
+        self,
+        scope: str,
+        actor_id: str,
+        key: str,
+        request_hash: str,
+        response_json: str,
+    ) -> None:
         ...
 
 
@@ -221,5 +287,13 @@ class VirusScannerService(Protocol):
         *,
         file_name: str,
         content_type: str,
-    ) -> AsyncIterable[bytes]:
+        ) -> AsyncIterable[bytes]:
+        ...
+
+
+class EventPublisher(Protocol):
+    async def publish(self, event: object) -> None:
+        ...
+
+    async def publish_many(self, events: list[object]) -> None:
         ...

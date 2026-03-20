@@ -7,14 +7,17 @@ from typing import Any, Callable
 
 from fastapi import APIRouter
 
+from software_management.application.interfaces import EventPublisher
 from software_management.application.use_cases import (
     DeleteSoftware,
+    DeprecateVersion,
     DownloadSoftware,
     GetAdminSummary,
     ListAdminSoftware,
     ListSoftware,
     ListVersions,
     PublishVersion,
+    RevokeVersion,
     UploadSoftware,
 )
 from software_management.infrastructure import (
@@ -24,6 +27,7 @@ from software_management.infrastructure import (
     DatabaseConfig,
     LocalAsyncStorageService,
     LocalStorageConfig,
+    NoOpEventPublisher,
     SQLAlchemySoftwareRepository,
 )
 from software_management.presentation import create_router
@@ -45,6 +49,11 @@ class SMSBootstrapConfig:
     database_url: str
     storage_root: Path
     upload_chunk_size: int = 1024 * 1024
+    upload_max_size_bytes: int | None = None
+    upload_rate_limit: int = 30
+    upload_rate_window_seconds: int = 60
+    download_rate_limit: int = 120
+    download_rate_window_seconds: int = 60
     pool_size: int = 20
     max_overflow: int = 40
     pool_timeout: int = 30
@@ -58,7 +67,7 @@ class SMSModule:
     database: AsyncDatabase
 
     async def initialize(self) -> None:
-        await self.database.create_schema()
+        await self.database.verify_schema()
 
     async def close(self) -> None:
         await self.database.dispose()
@@ -68,6 +77,7 @@ def build_sms_module(
     *,
     config: SMSBootstrapConfig,
     current_actor_dependency: Callable[..., Any],
+    event_publisher: EventPublisher | None = None,
 ) -> SMSModule:
     install_uvloop()
     database = AsyncDatabase(
@@ -82,10 +92,14 @@ def build_sms_module(
     )
     repository = SQLAlchemySoftwareRepository(database.sessionmaker)
     storage = LocalAsyncStorageService(
-        LocalStorageConfig(root=config.storage_root)
+        LocalStorageConfig(
+            root=config.storage_root,
+            max_upload_size_bytes=config.upload_max_size_bytes,
+        )
     )
     access_control = AccessControlAdapter()
     virus_scanner = AsyncVirusScannerAdapter()
+    publisher = event_publisher or NoOpEventPublisher()
 
     upload_software = UploadSoftware(
         repository=repository,
@@ -93,7 +107,20 @@ def build_sms_module(
         access_control=access_control,
         virus_scanner=virus_scanner,
     )
-    publish_version = PublishVersion(repository=repository, access_control=access_control)
+    publish_version = PublishVersion(
+        repository=repository,
+        access_control=access_control,
+        event_publisher=publisher,
+    )
+    deprecate_version = DeprecateVersion(
+        repository=repository,
+        access_control=access_control,
+    )
+    revoke_version = RevokeVersion(
+        repository=repository,
+        access_control=access_control,
+        event_publisher=publisher,
+    )
     download_software = DownloadSoftware(
         repository=repository,
         storage=storage,
@@ -104,6 +131,7 @@ def build_sms_module(
         repository=repository,
         storage=storage,
         access_control=access_control,
+        event_publisher=publisher,
     )
     list_software = ListSoftware(repository=repository)
     list_versions = ListVersions(repository=repository)
@@ -112,6 +140,8 @@ def build_sms_module(
     router = create_router(
         upload_software=upload_software,
         publish_version=publish_version,
+        deprecate_version=deprecate_version,
+        revoke_version=revoke_version,
         download_software=download_software,
         delete_software=delete_software,
         list_software=list_software,
@@ -120,5 +150,10 @@ def build_sms_module(
         list_admin_software=list_admin_software,
         current_actor_dependency=current_actor_dependency,
         upload_chunk_size=config.upload_chunk_size,
+        upload_max_size_bytes=config.upload_max_size_bytes,
+        upload_rate_limit=config.upload_rate_limit,
+        upload_rate_window_seconds=config.upload_rate_window_seconds,
+        download_rate_limit=config.download_rate_limit,
+        download_rate_window_seconds=config.download_rate_window_seconds,
     )
     return SMSModule(router=router, database=database)

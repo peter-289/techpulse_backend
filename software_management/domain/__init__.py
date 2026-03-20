@@ -1,8 +1,8 @@
 from .aggregates import Software
 from .entities import Artifact, Version
-from .events import SoftwareUploaded, VersionPublished
+from .events import SoftwareDeleted, SoftwareUploaded, VersionPublished, VersionRevoked
 from .repositories import SoftwareRepositoryProtocol
-from .value_objects import FileHash, VersionNumber
+from .value_objects import FileHash, VersionNumber, VersionStatus
 
 __all__ = [
     "Artifact",
@@ -10,8 +10,10 @@ __all__ = [
     "Software",
     "SoftwareRepositoryProtocol",
     "SoftwareUploaded",
+    "SoftwareDeleted",
     "Version",
     "VersionNumber",
     "VersionPublished",
+    "VersionRevoked",
+    "VersionStatus",
 ]
-

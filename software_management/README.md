@@ -45,7 +45,7 @@ software_management/
 SMS is integrated in the main app lifecycle:
 
 - Built at startup composition time in `app/main.py`.
-- Schema created through `await sms_module.initialize()`.
+- Schema validated through `await sms_module.initialize()` (migrations must be applied first).
 - Router mounted through `app.include_router(sms_module.router)`.
 - Async engine disposed via `await sms_module.close()` on shutdown.
 
@@ -125,6 +125,11 @@ Used from existing app settings:
 - `DATABASE_URL`
 - `UPLOAD_ROOT`
 - `PACKAGE_UPLOAD_CHUNK_SIZE_BYTES`
+- `PACKAGE_UPLOAD_MAX_SIZE_BYTES`
+- `PACKAGE_UPLOAD_RATE_LIMIT`
+- `PACKAGE_UPLOAD_RATE_WINDOW_SECONDS`
+- `PACKAGE_DOWNLOAD_RATE_LIMIT`
+- `PACKAGE_DOWNLOAD_RATE_WINDOW_SECONDS`
 - `DB_POOL_SIZE`
 - `DB_MAX_OVERFLOW`
 - `DB_POOL_TIMEOUT`
@@ -139,12 +144,12 @@ SMS storage root defaults to:
 Current status: **Partially ready**. Core architecture and async streaming are in place, but complete production hardening still needs these:
 
 1. Add Alembic migrations for `sms_*` tables.
-- Current code uses runtime `create_all` for SMS schema.
-- Production should manage schema changes only via migrations.
+- Done. SMS tables are created by Alembic migration `20260304_0007_sms_cutover_tables.py`.
+- Runtime now validates schema presence and expects migrations to be applied.
 
 2. Add explicit upload size limits and request throttling.
-- Enforce max artifact size at API boundary and storage layer.
-- Add rate limits for upload/download endpoints.
+- Done. Max artifact size is enforced at API boundary and storage layer.
+- Done. Upload/download endpoints now enforce request rate limits.
 
 3. Upgrade virus scanner adapter to real scanner backend.
 - Current adapter is stub-like and should be replaced with ClamAV/SaaS integration.

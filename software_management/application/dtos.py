@@ -29,6 +29,8 @@ class UploadSoftwareInput:
     software_id: UUID | None = None
     publish_now: bool = False
     expected_software_row_version: int | None = None
+    idempotency_key: str | None = None
+    expected_file_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,7 @@ class PublishVersionInput:
     software_id: UUID
     version: str
     expected_software_row_version: int | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,41 @@ class PublishVersionOutput:
     version_id: UUID
     version: str
     published_at: datetime
+    software_row_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class DeprecateVersionInput:
+    actor_id: str
+    software_id: UUID
+    version: str
+    expected_software_row_version: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeprecateVersionOutput:
+    software_id: UUID
+    version_id: UUID
+    version: str
+    deprecated_at: datetime
+    software_row_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeVersionInput:
+    actor_id: str
+    software_id: UUID
+    version: str
+    expected_software_row_version: int | None = None
+    idempotency_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeVersionOutput:
+    software_id: UUID
+    version_id: UUID
+    version: str
+    revoked_at: datetime
     software_row_version: int
 
 

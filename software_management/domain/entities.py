@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from .value_objects import FileHash, VersionNumber
+from .value_objects import FileHash, VersionNumber, VersionStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +32,10 @@ class Version:
     software_id: UUID
     artifact_id: UUID
     number: VersionNumber
-    is_published: bool
+    status: VersionStatus
     created_at: datetime
     published_at: datetime | None
 
+    @property
+    def is_published(self) -> bool:
+        return self.status.is_public
