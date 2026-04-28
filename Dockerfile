@@ -5,11 +5,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies first (better layer caching)
+COPY requirements.lock pyproject.toml ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.lock && \
+    pip install --no-cache-dir --no-deps -e .
 
+# Copy application code
 COPY . .
 
+# Create a non-root user
 RUN addgroup --system app && adduser --system --ingroup app appuser && \
     chown -R appuser:app /app
 
@@ -17,4 +22,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"]
