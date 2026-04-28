@@ -34,6 +34,15 @@ target_metadata = Base.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
+# Get connection args based on DATABASE 
+def get_connect_args() -> dict:
+    db_url = settings.DATABASE_URL or ""
+    if db_url.startswith("sqlite"):
+        return {"timeout": 15}
+    elif db_url.startswith("postgresql") or db_url.startswith("postgres"):
+        return {"connect_timeout": 15}
+    return {}
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -73,7 +82,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        connect_args={"timeout": 10},
+        connect_args=get_connect_args(),
     )
 
     with connectable.connect() as connection:
