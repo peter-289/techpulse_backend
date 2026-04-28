@@ -26,6 +26,22 @@ def _resolve_path(value: str, fallback: str) -> str:
     return str(path)
 
 
+def _normalize_database_url(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw.startswith("sqlite:///"):
+        return raw
+
+    sqlite_path = raw[len("sqlite:///") :]
+    if not sqlite_path or sqlite_path == ":memory:":
+        return raw
+
+    candidate = Path(sqlite_path)
+    if not candidate.is_absolute():
+        candidate = (BACKEND_ROOT / candidate).resolve()
+
+    return f"sqlite:///{candidate.as_posix()}"
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(PROJECT_ROOT / ".env", BACKEND_ROOT / ".env"),
@@ -35,7 +51,7 @@ class AppSettings(BaseSettings):
 
     # Core
     DATABASE_URL: str = "sqlite:///tech_pulse.db"
-    SECRET_KEY: str = "dev_secret_key_change_me_1234567890abcdef"
+    SECRET_KEY: str = "shdshhsahjhjfuhedjssjakk##$@##2334#322@32!@3#hdggdgdusd&*/???////??!1!340987g3s9"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
@@ -115,6 +131,7 @@ class AppSettings(BaseSettings):
     TRANSCRIPTION_BASE_URL: str = ""
 
     # Startup superuser seeding
+    STARTUP_RUN_MIGRATIONS: bool = True
     SUPERUSER_SEED_ENABLED: bool = True
     SUPERUSER_FULL_NAME: str = ""
     SUPERUSER_USERNAME: str = ""
@@ -148,6 +165,7 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def normalize_and_validate(self) -> "AppSettings":
+        self.DATABASE_URL = _normalize_database_url(self.DATABASE_URL)
         self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").upper()
         self.LOG_DIR = _resolve_path(self.LOG_DIR, "logs")
         self.LOG_FILE_PATH = _resolve_path(self.LOG_FILE_PATH, str(Path(self.LOG_DIR) / "app.log"))

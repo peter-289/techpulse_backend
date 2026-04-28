@@ -1,7 +1,9 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from datetime import datetime
-from app.models.enums import GenderEnum, RoleEnum
 from typing import Optional
+
+from app.models.enums import GenderEnum, RoleEnum
+    
 
 class UserBase(BaseModel):
     full_name: str

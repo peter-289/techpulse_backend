@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import os
@@ -13,9 +13,9 @@ from sqlalchemy import select
 
 from software_management.application.errors import ConflictError
 from software_management.application.interfaces import CreateVersionCommand
-from software_management.infrastructure.db import AsyncDatabase, DatabaseConfig
-from software_management.infrastructure.models import SoftwareModel, VersionModel
-from software_management.infrastructure.repository import SQLAlchemySoftwareRepository
+from software_management.adapters.driven.persistence.db import AsyncDatabase, DatabaseConfig
+from software_management.adapters.driven.persistence.models import SoftwareModel, VersionModel
+from software_management.adapters.driven.persistence.repository import SQLAlchemySoftwareRepository
 
 _VALID_HASH = "a" * 64
 
@@ -182,3 +182,7 @@ def test_current_version_self_heals() -> None:
                 assert software.current_version_id is None
 
         asyncio.run(scenario())
+
+
+
+

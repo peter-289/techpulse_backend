@@ -23,6 +23,8 @@ from app.core.config import settings
 
 from sqlalchemy.exc import SQLAlchemyError
 
+logger = logging.getLogger(__name__)
+
 class AuthService:
     def __init__(self, uow: UnitOfWork):
         self.uow = uow # Context manager
@@ -124,8 +126,10 @@ class AuthService:
             user = self.uow.user_repo.get_user_by_email(normalized_email)
         if not user:
             return "If the e-mail is registered, you will receive a reset link."
-
+       
+        # Create a password reset token
         token = create_password_reset_token(user.id)
+        # add a to send a reset token
         background_tasks.add_task(
             send_password_reset_email,
             token,

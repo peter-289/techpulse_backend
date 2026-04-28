@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import requests
 
 from app.core.config import settings
 from app.core.unit_of_work import UnitOfWork
 from app.exceptions.exceptions import ExternalServiceError, ValidationError
 from app.models.chat_message import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 class SupportChatService:
@@ -21,12 +24,23 @@ class SupportChatService:
     def __init__(self, uow: UnitOfWork):
         self.uow = uow
 
+    @staticmethod
+    def _fallback_reply() -> str:
+        return (
+            "Support assistant is temporarily unavailable. "
+            "Please include your issue details, expected behavior, and any error message."
+        )
+
     def ask(self, *, user_id: int, message: str) -> ChatMessage:
         cleaned = (message or "").strip()
         if len(cleaned) < 2:
             raise ValidationError("Message is too short")
 
-        assistant_reply = self._generate_reply(cleaned)
+        try:
+            assistant_reply = self._generate_reply(cleaned)
+        except ExternalServiceError as exc:
+            logger.warning("Support AI unavailable, falling back to canned reply: %s", exc)
+            assistant_reply = self._fallback_reply()
 
         chat_message = ChatMessage(
             user_id=user_id,
@@ -43,10 +57,7 @@ class SupportChatService:
 
     def _generate_reply(self, message: str) -> str:
         if not settings.AI_API_KEY:
-            return (
-                "Support assistant is in fallback mode. "
-                "Please include your issue details, expected behavior, and any error message."
-            )
+            return self._fallback_reply()
 
         url = f"{settings.AI_BASE_URL.rstrip('/')}/chat/completions"
         headers = {
@@ -70,13 +81,37 @@ class SupportChatService:
         if response.status_code >= 400:
             raise ExternalServiceError(f"AI support service failed: {response.text[:200]}")
 
-        data = response.json()
-        choices = data.get("choices") or []
-        content = (
-            choices[0].get("message", {}).get("content").strip()
-            if choices and choices[0].get("message")
-            else ""
-        )
+        try:
+            data = response.json()
+        except ValueError as exc:
+            logger.warning("AI support service returned non-JSON response: %s", response.text[:200])
+            raise ExternalServiceError("AI support service returned an invalid response") from exc
+
+        content = self._extract_assistant_content(data)
         if not content:
             raise ExternalServiceError("AI support service returned an empty response")
         return content
+
+    @staticmethod
+    def _extract_assistant_content(data: dict) -> str:
+        # OpenAI-compatible shape
+        choices = data.get("choices") or []
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and isinstance(part.get("text"), str):
+                        text_parts.append(part["text"])
+                if text_parts:
+                    return "\n".join(text_parts).strip()
+
+        # Some providers expose text directly
+        output_text = data.get("output_text")
+        if isinstance(output_text, str):
+            return output_text.strip()
+
+        return ""

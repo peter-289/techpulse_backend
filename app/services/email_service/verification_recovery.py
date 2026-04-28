@@ -11,6 +11,10 @@ from app.models.enums import UserStatus
 from app.services.email_service.email_service import send_verification_email
 
 
+logger = logging.getLogger(__name__)
+
+
+
 def compute_recovery_delay_seconds(
     retry_count: int,
     base_delay_seconds: int = settings.EMAIL_RECOVERY_BACKOFF_BASE_SECONDS,
@@ -115,32 +119,49 @@ async def process_unverified_users_once() -> None:
                 error_message=str(exc),
                 override_retry_count=retry_count,
             )
-            logging.warning(
+            logger.warning(
                 "[recovery] Verification resend failed for user_id=%s email=%s retry_count=%s: %s",
                 candidate["id"],
                 candidate["email"],
                 retry_count,
                 exc,
             )
-    logging.info("[recovery] Processed %s verification email candidate(s).", len(candidates))
+    logger.info("[recovery] Processed %s verification email candidate(s).", len(candidates))
 
 
-async def run_verification_recovery_loop(stop_event: asyncio.Event) -> None:
-    startup_wait = max(0, settings.EMAIL_RECOVERY_STARTUP_DELAY_SECONDS)
-    if startup_wait:
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=startup_wait)
-            return
-        except asyncio.TimeoutError:
-            pass
+async def run_verification_recovery_loop(
+    stop_event: asyncio.Event,
+    db_ready_event: asyncio.Event,
+) -> None:
+    """
+    Production-safe recovery loop:
+    - waits for DB readiness
+    - respects shutdown signal
+    - avoids race conditions with migrations/seeding
+    """
+
+    # GATE: DB must be ready
+    await db_ready_event.wait()
+
+    logger.info("[recovery] DB ready, starting loop")
+
+    # Optional startup delay (NOT for DB safety, only load smoothing)
+    await asyncio.sleep(max(0, settings.EMAIL_RECOVERY_STARTUP_DELAY_SECONDS))
 
     while not stop_event.is_set():
         try:
             await process_unverified_users_once()
-        except Exception as exc:
-            logging.exception("[recovery] Verification recovery loop iteration failed: %s", exc)
 
+        except Exception:
+            logger.exception(
+                "[recovery] iteration failed (will retry)"
+            )
+
+        # Wait between iterations OR shutdown
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=settings.EMAIL_RECOVERY_INTERVAL_SECONDS)
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=settings.EMAIL_RECOVERY_INTERVAL_SECONDS,
+            )
         except asyncio.TimeoutError:
             continue
