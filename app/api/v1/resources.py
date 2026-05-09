@@ -28,7 +28,7 @@ def get_resource(
     slug: str,
     service: ResourceService = Depends(get_service),
     _user: dict = Depends(get_current_user),
-):
+): 
     return service.get_by_slug(slug=slug)
 
 

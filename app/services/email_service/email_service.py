@@ -1,5 +1,6 @@
 import logging
 from email.message import EmailMessage
+from pathlib import Path
 
 import aiosmtplib
 from jinja2 import Environment, FileSystemLoader
@@ -7,7 +8,8 @@ from jinja2 import Environment, FileSystemLoader
 from app.core.config import mail_config, settings
 
 
-env = Environment(loader=FileSystemLoader("app/services/email_service/templates"))
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
 template = env.get_template("verification_email.html")
 password_reset_template = env.get_template("password_reset_email.html")
 

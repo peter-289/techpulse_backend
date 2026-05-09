@@ -111,7 +111,7 @@ class AuthService:
             session = self.uow.session_repo.add_session(session)
         return refresh_token, session
 
-    # 
+    # Request password reset
     def request_password_reset(self, email: str, background_tasks) -> str:
         # Intentional generic response to avoid account enumeration.
         normalized_email = (email or "").strip().lower()
@@ -138,6 +138,7 @@ class AuthService:
         )
         return "If the e-mail is registered, you will receive a reset link."
 
+    # Reset password
     def reset_password(self, token: str, new_password: str, confirm_password: str) -> None:
         if new_password != confirm_password:
             raise ValidationError("Passwords do not match")
@@ -156,6 +157,7 @@ class AuthService:
                 revoked_at=datetime.now(timezone.utc),
             )
 
+    # Rotate sessions
     def rotate_session(self, refresh_token: str, user_agent: str | None, ip_address: str | None):
         refresh_hash = self._hash_refresh_token(refresh_token)
         now = datetime.now(timezone.utc)
@@ -180,7 +182,8 @@ class AuthService:
         payload = {"sub": str(user.id), "role": user.role.value if hasattr(user.role, "value") else str(user.role)}
         access_token = create_login_token(data=payload)
         return user, access_token, new_refresh
-
+    
+    # Revoke a session
     def revoke_session(self, refresh_token: str) -> None:
         refresh_hash = self._hash_refresh_token(refresh_token)
         now = datetime.now(timezone.utc)
@@ -189,7 +192,8 @@ class AuthService:
             if not session:
                 return
             self.uow.session_repo.revoke_session(session=session, revoked_at=now)
-
+    
+    # Hash the refresh token
     def _hash_refresh_token(self, refresh_token: str) -> str:
         return hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
 

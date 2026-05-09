@@ -7,6 +7,7 @@ from app.repositories.session import SessionRepo
 from app.repositories.chat_message import ChatMessageRepo
 from app.repositories.project import ProjectRepo
 from app.repositories.resource import ResourceRepo
+from app.repositories.audit import AuditRepository
 
 class UnitOfWork:
     """Unit of Work pattern implementation for managing database transactions.
@@ -18,7 +19,7 @@ class UnitOfWork:
     def __init__(self, session: Session):
         """Initialize the UnitOfWork with a database session.
         Args:
-            session: SQLAlchemy session object for database operations.
+           session: SQLAlchemy session object for database operations.
         """
         self.session = session
         self._user_repo = None
@@ -27,6 +28,7 @@ class UnitOfWork:
         self._chat_message_repo = None
         self._project_repo = None
         self._resource_repo = None
+        self._audit_repo = None
 
 
     @property
@@ -58,6 +60,12 @@ class UnitOfWork:
         if self._resource_repo is None:
             self._resource_repo = ResourceRepo(self.session)
         return self._resource_repo
+    
+    @property
+    def audit_repo(self) -> AuditRepository:
+        if self._audit_repo is None:
+            self._audit_repo = AuditRepository(self.session)
+        return self._audit_repo
         
 
     def commit(self) -> None:

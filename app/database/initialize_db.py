@@ -12,10 +12,12 @@ from app.core.config import settings
 from app.models import (  # noqa: F401
     audit_event,
     chat_message,
+    payment,
     project,
     resource,
     security_alert,
     session,
+    software,
     user,
 )
 

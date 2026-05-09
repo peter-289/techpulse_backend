@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 class LifecycleManager:
     """
     This app cylce manager class monitors the applications state
-    It manages tasks and background workers, daemons on startup and shutdown events.
+    It manages tasks and background workers, daemons, on startup and shutdown events.
     """
     # Initial state
-    state: AppState = AppState.BOOTING
+    state: AppState = AppState.BOOTING 
     db_ready: asyncio.Event = field(default=None) 
     shutdown_event: asyncio.Event = field(default=None) # Shutdown event
     tasks: list[asyncio.Task] = field(default_factory=list) # Tasks
@@ -22,7 +22,8 @@ class LifecycleManager:
     def __post_init__(self):
          self.db_ready = asyncio.Event()
          self.shutdown_event = asyncio.Event()
-
+    
+    # Set app state
     def set_state(self, new_state: AppState):
         """Set application status"""
         logger.info("[lifecycle] %s → %s", self.state.name, new_state.name)
@@ -40,9 +41,10 @@ class LifecycleManager:
         return task
 
     async def shutdown(self):
-        """ Shutdown event -- cancel all tasks ongoing"""
+        """ Shutdown event -- cancel all ongoing tasks"""
         logger.info("[lifecycle] shutting down...")
         self.shutdown_event.set()
-
+        
+        # Cancel tasks
         for t in self.tasks:
             t.cancel()

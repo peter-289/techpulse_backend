@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from app.database.db_setup import get_db
 from app.core.security import get_current_user
-from app.services.audit_service import log_http_audit_event
+from app.services.audit_service import AuditService
+from app.core.unit_of_work import UnitOfWork
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
+# Get User Service
+def get_service(db: Session = Depends(get_db))->AuditService:
+    uow = UnitOfWork(session=db)
+    return AuditService(uow=uow)
 
 class AnalyticsEventRequest(BaseModel):
     event_type: str = Field(..., pattern="^(cookie_consent|user_activity)$")
@@ -34,6 +41,7 @@ def _safe_metadata(raw: dict | None) -> dict:
 def capture_analytics_event(
     payload: AnalyticsEventRequest,
     request: Request,
+    service: AuditService=Depends(get_service),
     current_user: dict = Depends(get_current_user),
 ):
     is_cookie_event = payload.event_type == "cookie_consent"
@@ -61,7 +69,7 @@ def capture_analytics_event(
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
 
-    log_http_audit_event(
+    service.log_audit_event(
         event_type=event_type,
         actor_user_id=int(current_user["user_id"]),
         method=request.method,

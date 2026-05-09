@@ -1,18 +1,16 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from ..enums import ArtifactStatus
-from ..events import MalwareScanFailedEvent, MalwareScanSuccessEvent
-from ..exceptions import ArtifactIntegrityError, InvalidStateTransitionError
+from .enums import ArtifactStatus
+from .events import MalwareScanFailedEvent, MalwareScanSuccessEvent
+from .exceptions import ArtifactIntegrityError, InvalidStateTransitionError
 
 
-def _ensure_utc(ts: datetime) -> datetime:
-    if ts.tzinfo is None:
-        raise ValueError("Artifact timestamps must be timezone-aware.")
-    return ts.astimezone(timezone.utc)
+def _ensure_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @dataclass(slots=True)
@@ -54,11 +52,6 @@ class Artifact:
         self.status = ArtifactStatus.QUARANTINED
         self.quarantine_reason = event.reason
         self.updated_at = event.occurred_at
-
-    def quarantine(self, reason: str, at: datetime) -> None:
-        self.status = ArtifactStatus.QUARANTINED
-        self.quarantine_reason = reason
-        self.updated_at = _ensure_utc(at)
 
     def soft_delete(self, at: datetime) -> None:
         self.status = ArtifactStatus.DELETED

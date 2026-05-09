@@ -1,21 +1,19 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
 
-def _utc_now() -> datetime:
+def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
-class DomainEvent:
+class SoftwareEvent:
     occurred_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
-class MalwareScanRequestedEvent(DomainEvent):
+class MalwareScanRequestedEvent(SoftwareEvent):
     software_id: UUID
     version_id: UUID
     artifact_id: UUID
@@ -23,14 +21,14 @@ class MalwareScanRequestedEvent(DomainEvent):
 
 
 @dataclass(frozen=True, slots=True)
-class MalwareScanSuccessEvent(DomainEvent):
+class MalwareScanSuccessEvent(SoftwareEvent):
     software_id: UUID
     version_id: UUID
     artifact_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
-class MalwareScanFailedEvent(DomainEvent):
+class MalwareScanFailedEvent(SoftwareEvent):
     software_id: UUID
     version_id: UUID
     artifact_id: UUID
@@ -38,7 +36,7 @@ class MalwareScanFailedEvent(DomainEvent):
 
 
 @dataclass(frozen=True, slots=True)
-class VersionPublishedEvent(DomainEvent):
+class VersionPublishedEvent(SoftwareEvent):
     software_id: UUID
     version_id: UUID
 
@@ -50,7 +48,7 @@ def malware_scan_requested(
     storage_key: str,
 ) -> MalwareScanRequestedEvent:
     return MalwareScanRequestedEvent(
-        occurred_at=_utc_now(),
+        occurred_at=utc_now(),
         software_id=software_id,
         version_id=version_id,
         artifact_id=artifact_id,
@@ -58,13 +56,9 @@ def malware_scan_requested(
     )
 
 
-def malware_scan_success(
-    software_id: UUID,
-    version_id: UUID,
-    artifact_id: UUID,
-) -> MalwareScanSuccessEvent:
+def malware_scan_success(software_id: UUID, version_id: UUID, artifact_id: UUID) -> MalwareScanSuccessEvent:
     return MalwareScanSuccessEvent(
-        occurred_at=_utc_now(),
+        occurred_at=utc_now(),
         software_id=software_id,
         version_id=version_id,
         artifact_id=artifact_id,
@@ -78,7 +72,7 @@ def malware_scan_failed(
     reason: str,
 ) -> MalwareScanFailedEvent:
     return MalwareScanFailedEvent(
-        occurred_at=_utc_now(),
+        occurred_at=utc_now(),
         software_id=software_id,
         version_id=version_id,
         artifact_id=artifact_id,
@@ -87,8 +81,4 @@ def malware_scan_failed(
 
 
 def version_published(software_id: UUID, version_id: UUID) -> VersionPublishedEvent:
-    return VersionPublishedEvent(
-        occurred_at=_utc_now(),
-        software_id=software_id,
-        version_id=version_id,
-    )
+    return VersionPublishedEvent(occurred_at=utc_now(), software_id=software_id, version_id=version_id)

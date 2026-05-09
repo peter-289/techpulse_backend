@@ -67,7 +67,7 @@ class AbuseProtection:
                     ttl = window_seconds
                 return count > limit, max(1, ttl)
             except RedisError:
-                pass
+                  pass
 
         now = int(time.time())
         with self._lock:

@@ -51,6 +51,9 @@ class UserRepo:
         return self.db.execute(stmt).scalar_one_or_none()
     
     def get_user_by_email(self, email: str)-> Optional[User]:
+        """
+        Get user by email.
+        """
         stmt = select(User).where(User.email == email)
         return self.db.execute(stmt).scalar_one_or_none()
 

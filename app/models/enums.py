@@ -1,4 +1,4 @@
-from enum import Enum, auto
+from enum import Enum, auto, StrEnum
 
 # Gender Enum
 class GenderEnum(str, Enum):
@@ -27,3 +27,19 @@ class AppState(Enum):
     SERVICES_READY = auto()
     RUNNING = auto()
     FAILED = auto()
+
+
+class AuditEventType(StrEnum):
+    LOGIN_FAILED = "auth.login.failed"
+    ACCESS_DENIED = "auth.access.denied"
+
+
+class AlertRuleCode(StrEnum):
+    AUTH_BRUTE_FORCE_IP = "AUTH_BRUTE_FORCE_IP"
+    EXCESSIVE_FORBIDDEN_REQUESTS = "EXCESSIVE_FORBIDDEN_REQUESTS"
+
+
+class AlertSeverity(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"

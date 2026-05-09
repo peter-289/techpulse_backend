@@ -10,7 +10,7 @@ from app.models.chat_message import ChatMessage
 
 logger = logging.getLogger(__name__)
 
-
+# Support chat service
 class SupportChatService:
     SYSTEM_PROMPT = (
         "You are Tech Pulse customer support. "
@@ -22,10 +22,11 @@ class SupportChatService:
     )
 
     def __init__(self, uow: UnitOfWork):
-        self.uow = uow
+        self.uow = uow # Context manager
 
     @staticmethod
     def _fallback_reply() -> str:
+        """ Returns a default message when the AI model is unavailable"""
         return (
             "Support assistant is temporarily unavailable. "
             "Please include your issue details, expected behavior, and any error message."
@@ -54,8 +55,10 @@ class SupportChatService:
     def list_messages(self, *, user_id: int, limit: int = 25) -> list[ChatMessage]:
         with self.uow:
             return self.uow.chat_message_repo.list_for_user(user_id=user_id, limit=limit)
-
+    
+    # Make a request to the AI model
     def _generate_reply(self, message: str) -> str:
+        """ Get message from model or give a fallback response. """
         if not settings.AI_API_KEY:
             return self._fallback_reply()
 
@@ -91,6 +94,7 @@ class SupportChatService:
         if not content:
             raise ExternalServiceError("AI support service returned an empty response")
         return content
+
 
     @staticmethod
     def _extract_assistant_content(data: dict) -> str:

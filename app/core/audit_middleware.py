@@ -9,9 +9,12 @@ import anyio
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+
 from app.core.config import settings
 from app.core.security import get_current_user_optional
-from app.services.audit_service import log_http_audit_event
+from app.services.audit_service import AuditService
+from app.core.unit_of_work import UnitOfWork
+from app.database.db_setup import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 user_agent = request.headers.get("user-agent")
 
                 writer = partial(
-                    log_http_audit_event,
+                    self._log_audit_event,
                     event_type=event_type,
                     actor_user_id=actor_user_id,
                     method=request.method,
@@ -95,6 +98,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if not path.startswith("/api/"):
             return True
         return path.startswith(self._SKIP_PREFIXES)
+
+    def _log_audit_event(self, **event_data) -> None:
+        db = SessionLocal()
+        try:
+            AuditService(UnitOfWork(session=db)).log_audit_event(**event_data)
+        finally:
+            db.close()
 
     def _classify_event_type(self, path: str, status_code: int) -> str:
         if path == "/api/v1/auth/login":

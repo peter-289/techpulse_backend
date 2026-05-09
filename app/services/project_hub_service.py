@@ -32,6 +32,7 @@ class ProjectHubService:
         filename: str,
         content: bytes,
     ) -> Project:
+        
         cleaned_name = (name or "").strip()
         cleaned_desc = (description or "").strip()
         if not cleaned_name or not cleaned_desc:

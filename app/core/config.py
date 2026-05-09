@@ -99,6 +99,17 @@ class AppSettings(BaseSettings):
     PACKAGE_DOWNLOAD_RATE_LIMIT: int = 120
     PACKAGE_DOWNLOAD_RATE_WINDOW_SECONDS: int = 60
 
+    # Payments
+    PAYMENT_PROVIDER: str = "manual"
+    PAYMENT_PROVIDER_PUBLIC_KEY: str = ""
+    PAYMENT_PROVIDER_SECRET_KEY: str = ""
+    PAYMENT_WEBHOOK_SECRET: str = ""
+
+    # Malware scanning
+    MALWARE_SCAN_PROVIDER: str = "local"
+    MALWARE_SCAN_API_URL: str = ""
+    MALWARE_SCAN_API_KEY: str = ""
+
     # Authentication
     ALGORITHM: str = "HS256"
     LOGIN_TOKEN_EXPIRE_MINUTES: int = 30
@@ -173,6 +184,8 @@ class AppSettings(BaseSettings):
         self.BACKEND_URL = (self.BACKEND_URL or self.BASE_URL or "http://127.0.0.1:8000").strip()
         self.UPLOAD_ROOT = _resolve_path(self.UPLOAD_ROOT, "storage")
         self.PACKAGE_STORAGE_BACKEND = (self.PACKAGE_STORAGE_BACKEND or "local").lower()
+        self.PAYMENT_PROVIDER = (self.PAYMENT_PROVIDER or "manual").lower()
+        self.MALWARE_SCAN_PROVIDER = (self.MALWARE_SCAN_PROVIDER or "local").lower()
         self.COOKIE_SAMESITE = (self.COOKIE_SAMESITE or "lax").lower()
         self.COOKIE_DOMAIN = (self.COOKIE_DOMAIN or "").strip() or None
         self.PASSWORD_RESET_SECRET = (
@@ -183,6 +196,10 @@ class AppSettings(BaseSettings):
 
         if self.PACKAGE_STORAGE_BACKEND not in {"local", "object"}:
             raise RuntimeError("PACKAGE_STORAGE_BACKEND must be 'local' or 'object'.")
+        if self.PAYMENT_PROVIDER not in {"manual"}:
+            raise RuntimeError("PAYMENT_PROVIDER must be 'manual' until a provider adapter is configured.")
+        if self.MALWARE_SCAN_PROVIDER not in {"local"}:
+            raise RuntimeError("MALWARE_SCAN_PROVIDER must be 'local' until a scanner adapter is configured.")
         if self.COOKIE_SAMESITE not in {"lax", "strict", "none"}:
             raise RuntimeError("COOKIE_SAMESITE must be one of: lax, strict, none.")
         return self
