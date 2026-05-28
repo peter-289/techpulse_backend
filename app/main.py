@@ -14,6 +14,7 @@ from app.exceptions.handlers import register_exception_handlers
 from app.core.config import settings
 from app.core.audit_middleware import AuditMiddleware
 
+
 from app.api.v1.users import router as user_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.support_chat import router as support_chat_router

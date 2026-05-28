@@ -27,7 +27,7 @@ def get_service(db: Session = Depends(get_db)) -> SoftwareService:
 
 
 def _category(description: str) -> str:
-    for line in (description or "").splitlines():
+    for line in (description or "").splitlines(keepends=True):
         if line.lower().startswith("category:"):
             return line.split(":", 1)[1].strip().lower() or "others"
     return "others"

@@ -28,7 +28,7 @@ from app.services.payment_provider import PaymentProvider, get_payment_provider
 @dataclass(frozen=True, slots=True)
 class UploadedFile:
     """ Upload file data shape"""
-    filename: str
+    filename: str 
     content_type: str
     size_bytes: int
     sha256: str

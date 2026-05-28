@@ -37,9 +37,9 @@ def register_user(
     auth_service: AuthService = Depends(get_auth_service)
     ):
     user = service.create_user(payload)
+    
     try:
-        # auth_service.enqueue_verification_email(background_tasks, payload=user)
-        pass
+        #auth_service.enqueue_verification_email(background_tasks, payload=user)
         logger.info("User registered successfully", extra={"user_id": user.id, "email": user.email})
         logger.warning("Email verification is currently disabled, skipping email queueing", extra={"user_id": user.id})
     except DomainError as exc:

@@ -16,7 +16,7 @@ def seed_superuser(session: Session) -> None:
     if not settings.SUPERUSER_SEED_ENABLED:
         logger.info("[startup] Superuser seeding disabled")
         return
-
+    
     required = [settings.SUPERUSER_USERNAME, settings.SUPERUSER_EMAIL, settings.SUPERUSER_PASSWORD]
     if not all(item and item.strip() for item in required):
         logger.warning(

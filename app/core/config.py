@@ -149,7 +149,7 @@ class AppSettings(BaseSettings):
     SUPERUSER_EMAIL: str = ""
     SUPERUSER_PASSWORD: str = ""
     SUPERUSER_UPDATE_PASSWORD_ON_STARTUP: bool = False
-
+    
     # Session cookies
     ACCESS_COOKIE_NAME: str = "tp_access"
     REFRESH_COOKIE_NAME: str = "tp_refresh"

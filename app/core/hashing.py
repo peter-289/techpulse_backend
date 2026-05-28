@@ -10,6 +10,37 @@ ph = PasswordHasher(
     parallelism=4
 )
 
+# Password Manager Class(Not sure if it is really needed)
+class PasswordManager:
+      def __init__(self):
+          pass
+      
+      def _normalize_pass(password: str) -> str:
+           return unicodedata.normalize("NFKC", password)
+       
+      def hash_pass(self, password: str)->str:
+           normalized_pass = self._normalize_pass(password)
+           hashed_pass = ph.hash(normalized_pass)
+           return hashed_pass
+      
+      def verify_passwd(self, stored_hash: str, passwd: str):
+          password = self._normalize_pass(passwd)
+          try:
+              ph.verify(stored_hash, password)
+          except VerifyMismatchError:
+              return None
+          except InvalidHashError:
+              raise RuntimeError("Invalid password hash!")
+          
+          # Check if stored hash needs rehash
+          if ph.check_needs_rehash(stored_hash):
+              stored_hash = ph.hash(password)
+          return stored_hash
+          
+
+
+
+
 
 def _normalize_password(password: str) -> str:
     """Normalize password using NFKC Unicode normalization.
@@ -61,4 +92,7 @@ def verify_password(stored_hash: str, password: str) -> Optional[str]:
     if ph.check_needs_rehash(stored_hash):
         return ph.hash(password)
     return stored_hash
+
+
+
 

@@ -46,8 +46,8 @@ class AuthService:
                 if not user or not verified_hash:
                     raise ValidationError("Invalid username or password")
                 logging.warning("Email verification disabled, enable it at auth_service")
-                # if user.status != UserStatus.VERIFIED:
-                    # raise ValidationError("Email not approved")
+                if user.status != UserStatus.VERIFIED:
+                    raise ValidationError("Email not approved")
              
                 # Opportunistically upgrade hash parameters on successful login.
                 if verified_hash != user.password_hash:
@@ -55,7 +55,9 @@ class AuthService:
 
                 payload = {
                     "sub": str(user.id),
-                    "role": user.role.value if hasattr(user.role, "value") else str(user.role)
+                    "role": user.role.value
+                    if hasattr(user.role, "value") 
+                    else str(user.role)
                 }
                 token = create_login_token(data=payload)
         except RuntimeError:
@@ -70,12 +72,12 @@ class AuthService:
         # Get user from email token, raise ValidationError if no user is found
         user = get_email_user(token=token)
         if not user:
-            raise ValidationError("Invalid token")
+            raise ValidationError("Invalid token.")
         with self.uow:
             # Fetch a user from db
             user_acc = self.uow.user_repo.get_user_by_id(user["user_id"])
             if not user_acc:
-                raise ValidationError("No account associated with user")
+                raise ValidationError("No account associated with this user.")
             # Mark account as verified
             user_acc.status = UserStatus.VERIFIED
     
@@ -84,6 +86,7 @@ class AuthService:
     def enqueue_verification_email(self, background_tasks, payload) -> None:
         try:
             token = create_email_verification_token(payload.id)
+            print("Token", token)
             queue_verification_email(
                 background_tasks=background_tasks,
                 token=token,
@@ -120,7 +123,7 @@ class AuthService:
 
         # Placeholder for future email validity integration.
         if not self._is_email_valid_for_delivery(normalized_email):
-            return "If the e-mail is registered, you will receive a reset link."
+          return "If the e-mail is registered, you will receive a reset link."
 
         with self.uow.read_only():
             user = self.uow.user_repo.get_user_by_email(normalized_email)
@@ -129,6 +132,8 @@ class AuthService:
        
         # Create a password reset token
         token = create_password_reset_token(user.id)
+        
+        
         # add a to send a reset token
         background_tasks.add_task(
             send_password_reset_email,
@@ -136,7 +141,7 @@ class AuthService:
             user.email,
             user.full_name,
         )
-        return "If the e-mail is registered, you will receive a reset link."
+        return "If email is registered you will recieve an email with a reset link."
 
     # Reset password
     def reset_password(self, token: str, new_password: str, confirm_password: str) -> None:

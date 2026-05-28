@@ -28,18 +28,21 @@ class LifecycleManager:
         """Set application status"""
         logger.info("[lifecycle] %s → %s", self.state.name, new_state.name)
         self.state = new_state
-
+    
+    # Mark database ready
     def mark_db_ready(self):
         """ Marks database  as ready for other processes to start"""
         self.db_ready.set()
         self.set_state(AppState.DB_READY)
-
+    
+    # Create task 
     def create_task(self, coro, name: str):
         """Create a task after confirming db is ready"""
         task = asyncio.create_task(coro, name=name)
         self.tasks.append(task)
         return task
-
+    
+    # Shutdown event
     async def shutdown(self):
         """ Shutdown event -- cancel all ongoing tasks"""
         logger.info("[lifecycle] shutting down...")
