@@ -1,0 +1,64 @@
+## =====================================================
+# === New Modular Version ===
+
+import logging
+from fastapi.concurrency import run_in_threadpool
+
+from .user_schema import UserCreate
+from app.infrastructure.database.models.user import User
+from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.security.password_manager import hash_password
+from .rules import check_by_email, check_by_username, map_integrity_error, validate_password_strength
+from app.exceptions.exceptions import ConflictError, NotFoundError, DomainError
+
+
+from sqlalchemy.exc import IntegrityError
+
+logger = logging.getLogger(__name__)
+
+class UserService:
+    def __init__(self, uow: UnitOfWork):
+        self.uow = uow
+
+    # Create user
+    async def create_user(self, payload: UserCreate):
+       async with self.uow:
+            # Validate password strength
+            validate_password_strength(payload.password)
+            # Hash password
+            pass_hash = await run_in_threadpool(hash_password, payload.password)
+
+            # create user
+            user = User(
+                full_name=payload.full_name,
+                username=payload.username,
+                email=payload.email,
+                gender=payload.gender,
+                password_hash=pass_hash,
+            )
+            try:
+                user = await self.uow.user_repo.add_user(user)
+            except IntegrityError as exc:
+                raise self._map_user_integrity_error(exc) from exc
+            return user
+
+    # List users
+    async def list_users(self, cursor: int | None = None, limit: int = 100) -> list[User]:
+       async with self.uow.read_only():
+            users = await self.uow.user_repo.list_users(cursor=cursor, limit=limit)
+            logger.debug("Fetched users page", extra={"cursor": cursor, "limit": limit})
+            return users
+
+    # Get user by id
+    async def get_user_by_id(self, user_id: int) -> User:
+        async with self.uow.read_only():
+            user = await self.uow.user_repo.get_user_by_id(user_id)
+            if not user:
+                raise NotFoundError("User not found.")
+            return user
+
+    def _map_user_integrity_error(self, exc: IntegrityError) -> ConflictError:
+        message = str(getattr(exc, "orig", exc)).lower()
+        map_integrity_error(message=message)
+        return ConflictError("Username or email already exists.")
+

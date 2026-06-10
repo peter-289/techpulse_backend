@@ -12,17 +12,17 @@ from pathlib import Path
 
 from app.exceptions.handlers import register_exception_handlers
 from app.core.config import settings
-from app.core.audit_middleware import AuditMiddleware
+from app.modules.security.audit_middleware import AuditMiddleware
 
 
-from app.api.v1.users import router as user_router
-from app.api.v1.auth import router as auth_router
-from app.api.v1.support_chat import router as support_chat_router
-from app.api.v1.projects import router as project_router
-from app.api.v1.resources import router as resource_router
-from app.api.v1.admin import router as admin_router
-from app.api.v1.analytics import router as analytics_router
-from app.api.v1.software_management import router as software_management_router
+from app.modules.user.user_router import router as user_router
+from app.modules.authentication.auth_router import router as auth_router
+from app.modules.user.support_chat_router import router as support_chat_router
+from app.modules.projects.projects_router import router as project_router
+from app.modules.resource.resources_router import router as resource_router
+from app.modules.user.admin_router import router as admin_router
+from app.modules.analytics.analytics_router import router as analytics_router
+from app.modules.software_management.software_router import router as software_management_router
 from app.core.lifespan import app_lifespan
 
 

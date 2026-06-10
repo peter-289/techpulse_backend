@@ -3,16 +3,12 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
+
 from alembic import context
 from app.core.config import settings, AppSettings
-from app.database.db_setup import Base
-from app.models import (
-    user,
-    session,
-    chat_message,
-    project,
-    resource,
-)  # noqa: F401
+from app.infrastructure.database.db_setup import Base
+import app.infrastructure.database.models
+from app.infrastructure.database.models import chat_message, project, resource, session  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -36,7 +32,7 @@ target_metadata = Base.metadata
 
 # Get connection args based on DATABASE 
 def get_connect_args() -> dict:
-    db_url = settings.DATABASE_URL or ""
+    db_url = settings.ALEMBIC_DATABASE_URL or ""
     if db_url.startswith("sqlite"):
         return {"timeout": 15}
     elif db_url.startswith("postgresql") or db_url.startswith("postgres"):
@@ -56,7 +52,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = settings.DATABASE_URL or config.get_main_option("sqlalchemy.url")
+    url = settings.ALEMBIC_DATABASE_URL or config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -76,8 +72,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    if settings.DATABASE_URL:
-        config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    if settings.ALEMBIC_DATABASE_URL:
+        config.set_main_option("sqlalchemy.url", settings.ALEMBIC_DATABASE_URL)
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

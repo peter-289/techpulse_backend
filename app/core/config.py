@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,7 +51,8 @@ class AppSettings(BaseSettings):
     )
 
     # Core
-    DATABASE_URL: str = "sqlite:///tech_pulse.db"
+    DATABASE_URL: str = "postgresql+asyncpg://hinsei:MwakiPeter_289@localhost:5432/techpulse_db"
+    ALEMBIC_DATABASE_URL: str = "postgresql+psycopg2://hinsei:MwakiPeter_289@localhost:5432/techpulse_db"
     SECRET_KEY: str = "shdshhsahjhjfuhedjssjakk##$@##2334#322@32!@3#hdggdgdusd&*/???////??!1!340987g3s9"
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
@@ -177,6 +179,7 @@ class AppSettings(BaseSettings):
     @model_validator(mode="after")
     def normalize_and_validate(self) -> "AppSettings":
         self.DATABASE_URL = _normalize_database_url(self.DATABASE_URL)
+        self.ALEMBIC_DATABASE_URL = _normalize_database_url(self.ALEMBIC_DATABASE_URL)
         self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").upper()
         self.LOG_DIR = _resolve_path(self.LOG_DIR, "logs")
         self.LOG_FILE_PATH = _resolve_path(self.LOG_FILE_PATH, str(Path(self.LOG_DIR) / "app.log"))

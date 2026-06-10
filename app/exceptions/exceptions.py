@@ -7,13 +7,17 @@ class DomainError(Exception):
     def __init__(self, message: str | None = None):
         """Initialize domain error with message.
         Args:
-            message: Error message describing what went wrong.
+            message: Error message.
         """
         super().__init__(message or "Domain error")
 
 
 class NotFoundError(DomainError):
     """Exception raised when a requested resource is not found in the domain."""
+    pass
+
+class UnauthorizedError(DomainError):
+    """ Exception raised when server fail to validate client credentials."""
     pass
 
 class ConflictError(DomainError):

@@ -2,12 +2,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import logging
 
-from app.database.initialize_db import run_migrations_blocking
-from app.services.superuser_seeder import seed_superuser
-from app.database.db_setup import SessionLocal
-from app.services.app_cycle_manger import LifecycleManager
-from app.services.email_service.verification_recovery import run_verification_recovery_loop
-from app.models.enums import AppState
+# from app.infrastructure.database.initialize_db import run_migrations_blocking
+from app.infrastructure.scripts.superuser_seeder import seed_superuser
+from app.infrastructure.database.db_setup import SessionLocal
+from app.core.app_cycle_manger import LifecycleManager
+from app.infrastructure.email.email_service.verification_recovery import run_verification_recovery_loop
+from app.infrastructure.database.models.enums import AppState
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,23 +23,26 @@ async def app_lifespan(app: FastAPI):
         lifecycle.set_state(AppState.CONFIG_VALIDATED)
         settings.validate_security()
 
+
+        # Moved migrations to cli
         # === Migrations ===
         if settings.STARTUP_RUN_MIGRATIONS:
-            logger.info("[lifespan] Running database migrations...")
-            run_migrations_blocking(lifecycle=lifecycle)   # Still blocking but now clearer
+            # logger.info("[lifespan] Running database migrations...")
+            # run_migrations_blocking(lifecycle=lifecycle)   # Still blocking but now clearer
+            pass
         else:
             logger.warning("[lifespan] Migrations skipped")
 
         # === Seeding ===
         lifecycle.set_state(AppState.SEEDING_STARTED)
-        db = SessionLocal()
+        
         try:
             logger.info("[lifespan] Seeding superuser...")
-            seed_superuser(db)
-            db.commit()
+            async with SessionLocal() as db:
+                  await seed_superuser(db)
             logger.info("[lifespan] Seeding completed successfully")
         finally:
-            db.close()
+           await db.close()
 
         lifecycle.set_state(AppState.SEEDING_COMPLETE)
        

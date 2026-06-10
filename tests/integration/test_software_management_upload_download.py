@@ -1,8 +1,7 @@
 from app.main import app
 
-
 def test_software_management_contract_routes_are_registered() -> None:
-    paths = {getattr(route, "path", "") for route in app.routes}
+    paths = {getattr(route, "path", "") for route in app}
 
     assert "/api/v1/software-management" in paths
     assert "/api/v1/software-management/upload" in paths
@@ -14,3 +13,6 @@ def test_software_management_contract_routes_are_registered() -> None:
     assert "/api/v1/software-management/payments/{payment_id}/confirm" in paths
     assert "/api/v1/software-management/admin/packages" in paths
     assert "/api/v1/software-management/admin/summary" in paths
+
+if __name__ == "__main__":
+    test_software_management_contract_routes_are_registered()

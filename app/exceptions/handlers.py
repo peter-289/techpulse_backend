@@ -10,6 +10,7 @@ from app.exceptions.exceptions import (
     NotFoundError,
     PermissionError,
     ValidationError,
+    UnauthorizedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ConflictError)
     async def _conflict_handler(_request: Request, exc: ConflictError) -> JSONResponse:
+        print("Handler Triggered!")
         return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+    @app.exception_handler(UnauthorizedError)
+    async def _unauthorized_handler(_request: Request, exc: UnauthorizedError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
 
     @app.exception_handler(ValidationError)
     async def _validation_handler(_request: Request, exc: ValidationError) -> JSONResponse:

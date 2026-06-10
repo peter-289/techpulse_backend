@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app.domain.software import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
-from app.domain.software.events import malware_scan_success
+from app.modules.software_management.software import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
+from app.modules.software_management.software.events import malware_scan_success
 
 
 def test_sms_version_becomes_downloadable_only_after_scan_and_publish() -> None:
