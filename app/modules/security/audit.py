@@ -14,6 +14,7 @@ class AuditRepository:
     
     # Add event to db
     async def add_event(self, event: AuditEvent) -> AuditEvent:
+        """ Add audit events"""
         self.db.add(event)
         await self.db.flush()
         await self.db.refresh(event)

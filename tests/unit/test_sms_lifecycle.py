@@ -1,8 +1,11 @@
+import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.modules.software_management.software import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
 from app.modules.software_management.software.events import malware_scan_success
+from app.modules.software_management.software.exceptions import SoftwareAccessDeniedError
+from app.modules.software_management.software_service import SoftwareService
 
 
 def test_sms_version_becomes_downloadable_only_after_scan_and_publish() -> None:
@@ -68,3 +71,74 @@ def test_sms_owner_controlled_pricing_is_normalized() -> None:
 
     assert software.price_cents == 0
     assert software.currency == "USD"
+
+
+def test_paid_download_requires_purchase() -> None:
+    owner_id = SoftwareService.actor_uuid(1)
+    buyer_user_id = 2
+    software = Software.create(
+        name="Paid Package",
+        description="Useful package",
+        owner_id=owner_id,
+        visibility=SoftwareVisibility.PUBLIC,
+        price_cents=1999,
+    )
+    version = Version(
+        id=uuid4(),
+        software_id=software.id,
+        number=SemVer.parse("1.0.0"),
+        release_notes="Initial release",
+        status=VersionStatus.DRAFT,
+        lock_version=0,
+    )
+    artifact = Artifact(
+        id=uuid4(),
+        version_id=version.id,
+        storage_key="software/paid/1.0.0/package.zip",
+        sha256="b" * 64,
+        size_bytes=3,
+        mime_type="application/zip",
+        filename="package.zip",
+        status=ArtifactStatus.ACTIVE,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    version.attach_artifact(artifact)
+    software.add_version(version)
+    software.publish_version(version.id)
+
+    class Repository:
+        async def get(self, software_id):
+            return software
+
+        async def increment_download_count(self, version_id):
+            raise AssertionError("download count must not increment for denied downloads")
+
+    class Session:
+        async def scalar(self, statement):
+            return None
+
+        async def commit(self):
+            raise AssertionError("session must not commit for denied downloads")
+
+    class Storage:
+        def create_download_url(self, storage_key):
+            raise AssertionError("download URL must not be created for denied downloads")
+
+    service = SoftwareService.__new__(SoftwareService)
+    service.repository = Repository()
+    service.session = Session()
+    service.storage = Storage()
+
+    async def run() -> None:
+        try:
+            await service.download_url(
+                software_id=software.id,
+                version_number="1.0.0",
+                user_id=buyer_user_id,
+            )
+        except SoftwareAccessDeniedError:
+            return
+        raise AssertionError("paid download should require a purchase")
+
+    asyncio.run(run())

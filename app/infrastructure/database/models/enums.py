@@ -47,3 +47,18 @@ class AlertSeverity(StrEnum):
 class CookieConsent(StrEnum):
     ACCEPTED = "accepted"
     DECLINED = "declined"
+
+class SoftwareVisibility(StrEnum):
+    PUBLIC = "PUBLIC"
+    PRIVATE = "PRIVATE"
+
+class SoftwareStatus(StrEnum):
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    ARCHIVED = "archived"
+
+class VersionStatus(StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    DEPRECATED = "deprecated"
+    REVOKED = "revoked"

@@ -72,18 +72,29 @@ class AppSettings(BaseSettings):
     ALERT_DEDUP_MINUTES: int = 15
 
     # Redis
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_HOST: str = ""
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    REDIS_DB: int = 0
+    
+    @property
+    def REDIS_URL(self) -> str:
+        return (
+            f"redis://:{self.REDIS_PASSWORD}"
+            f"@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        )
+    
 
     # Email
     EMAIL_FROM: str = "no-reply@techpulse.local"
     EMAIL_SUBJECT: str = "Welcome to Tech Pulse"
-    SMTP_HOST: str = "sandbox.smtp.mailtrap.io"
-    SMTP_PORT: int = 2525
-    SMTP_USERNAME: str = "60d6d7ce5e2666"
-    SMTP_PASSWORD: str = "2d361b7eddfd39"
-    SMTP_USE_TLS: bool = True
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 1025
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = False
     SMTP_USE_SSL: bool = False
-    SMTP_VALIDATE_CERTS: bool = True
+    SMTP_VALIDATE_CERTS: bool =False
 
     # URLs
     BASE_URL: str = "http://127.0.0.1:8000"
@@ -117,7 +128,7 @@ class AppSettings(BaseSettings):
     LOGIN_TOKEN_EXPIRE_MINUTES: int = 30
     EMAIL_TOKEN_EXPIRE_MINUTES: int = 60
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
-    EMAIL_VERIFY_SECRET: str = "dev_email_verify_secret_change_me_1234567890"
+    EMAIL_VERIFY_SECRET: str = ""
     PASSWORD_RESET_SECRET: str = ""
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
     REFRESH_REQUIRE_SAME_USER_AGENT: bool = True
@@ -178,19 +189,35 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def normalize_and_validate(self) -> "AppSettings":
+
+        # Database URLs
         self.DATABASE_URL = _normalize_database_url(self.DATABASE_URL)
         self.ALEMBIC_DATABASE_URL = _normalize_database_url(self.ALEMBIC_DATABASE_URL)
+
+        # Log management
         self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").upper()
         self.LOG_DIR = _resolve_path(self.LOG_DIR, "logs")
         self.LOG_FILE_PATH = _resolve_path(self.LOG_FILE_PATH, str(Path(self.LOG_DIR) / "app.log"))
-        self.SMTP_HOST = _normalize_smtp_host(self.SMTP_HOST)
+        
+        # Backend URL/ upload root & package storage backend
         self.BACKEND_URL = (self.BACKEND_URL or self.BASE_URL or "http://127.0.0.1:8000").strip()
         self.UPLOAD_ROOT = _resolve_path(self.UPLOAD_ROOT, "storage")
         self.PACKAGE_STORAGE_BACKEND = (self.PACKAGE_STORAGE_BACKEND or "local").lower()
+
+        # Payment provider
         self.PAYMENT_PROVIDER = (self.PAYMENT_PROVIDER or "manual").lower()
+        
+        # Mail management
+        self.SMTP_HOST = _normalize_smtp_host(self.SMTP_HOST)
+
+        # Malware scan provider
         self.MALWARE_SCAN_PROVIDER = (self.MALWARE_SCAN_PROVIDER or "local").lower()
+
+        # Cookie management
         self.COOKIE_SAMESITE = (self.COOKIE_SAMESITE or "lax").lower()
         self.COOKIE_DOMAIN = (self.COOKIE_DOMAIN or "").strip() or None
+
+        # Password reset secret
         self.PASSWORD_RESET_SECRET = (
             (self.PASSWORD_RESET_SECRET or "").strip()
             or self.EMAIL_VERIFY_SECRET
@@ -214,8 +241,9 @@ class AppSettings(BaseSettings):
 
 
 settings = AppSettings()
+print(settings.REDIS_URL)
 
-
+# Mail management configuration
 @dataclass(frozen=True)
 class MailConfig:
     MAIL_USERNAME: str

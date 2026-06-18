@@ -52,7 +52,7 @@ async def _send_html_email(
 # Send verification email
 async def send_verification_email(token: str, email: str, name: str):
     verification_link = f"{settings.BACKEND_URL}/api/v1/auth/verify-page?token={token}"
-    # verification_link = f"http://127.0.0.1:8000/api/v1/auth/verify-page?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwiZXhwIjoxNzc4OTM2NzMyLCJpYXQiOjE3Nzg5MzQ5MzIsInB1cnBvc2UiOiJlbWFpbF92ZXJpZmljYXRpb24iLCJpc3MiOiJUZWNoX1B1bHNlX1RlY2hub2xvZ2llcyJ9.xPNis50EHXuyXkx-p8HuoMIFJ52usrrszCqlLBCfowI"
+    #verification_link = f"http://127.0.0.1:8000/api/v1/auth/verify-page?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwiZXhwIjoxNzc4OTM2NzMyLCJpYXQiOjE3Nzg5MzQ5MzIsInB1cnBvc2UiOiJlbWFpbF92ZXJpZmljYXRpb24iLCJpc3MiOiJUZWNoX1B1bHNlX1RlY2hub2xvZ2llcyJ9.xPNis50EHXuyXkx-p8HuoMIFJ52usrrszCqlLBCfowI"
     body = template.render(email=email, verification_link=verification_link, name=name)
 
     await _send_html_email(
@@ -68,7 +68,7 @@ async def send_verification_email(token: str, email: str, name: str):
 
 async def send_password_reset_email(token: str, email: str, name: str):
     reset_link = f"{settings.BACKEND_URL}/api/v1/auth/password-reset/page?token={token}"
-    # reset_link = f"http://127.0.0.1:8000/api/v1/auth/password-reset/page?token={token}"
+    #reset_link = f"http://127.0.0.1:8000/api/v1/auth/password-reset/page?token={token}"
     body = password_reset_template.render(email=email, password_reset_link=reset_link, name=name)
 
     await _send_html_email(

@@ -123,9 +123,15 @@ class SoftwareService:
         return int(user_id.int)
 
     @staticmethod
-    async def spool_file(file: BinaryIO, filename: str, chunk_size: int = 1024 * 1024) -> UploadedFile:
+    async def spool_file(
+        file: BinaryIO,
+        filename: str,
+        chunk_size: int = 1024 * 1024,
+        max_size_bytes: int | None = None,
+    ) -> UploadedFile:
         digest = hashlib.sha256()
         total = 0
+        limit = max_size_bytes or settings.PACKAGE_UPLOAD_MAX_SIZE_BYTES
         suffix = Path(filename or "package.bin").suffix
         temp = NamedTemporaryFile(delete=False, suffix=suffix)
         temp_path = Path(temp.name)
@@ -137,7 +143,9 @@ class SoftwareService:
                         break
                     digest.update(chunk)
                     total += len(chunk)
-                    await temp.write(chunk)
+                    if total > limit:
+                        raise SoftwareDomainError("Uploaded file exceeds the maximum allowed size.")
+                    temp.write(chunk)
             return UploadedFile(
                 filename=filename or "package.bin",
                 content_type="application/octet-stream",
@@ -343,16 +351,17 @@ class SoftwareService:
         return version
 
     async def download_url(self, *, software_id: UUID, version_number: str, user_id: int) -> str:
-        software = self.get(software_id)
+        software = await self.get(software_id)
         actor = self.actor_uuid(user_id)
         if software.visibility == SoftwareVisibility.PRIVATE and software.owner_id != actor:
             raise SoftwareAccessDeniedError("User is not entitled to this software.")
-        if software.price_cents > 0 and software.owner_id != actor and not self.has_purchase(software_id=software_id, user_id=user_id):
+        has_purchase = await self.has_purchase(software_id=software_id, user_id=user_id)
+        if software.price_cents > 0 and software.owner_id != actor and not has_purchase:
             raise SoftwareAccessDeniedError("Purchase is required before downloading this software.")
         version = software.get_version_by_semver(SemVer.parse(version_number))
         if not version.is_downloadable() or version.artifact is None:
             raise SoftwareNotFoundError("Requested version is not downloadable.")
-        self.repository.increment_download_count(version.id)
+        await self.repository.increment_download_count(version.id)
         await self.session.commit()
         return self.storage.create_download_url(version.artifact.storage_key)
 
@@ -371,11 +380,11 @@ class SoftwareService:
             raise SoftwareDomainError("Owners already have access to their own software.")
         if software.visibility == SoftwareVisibility.PRIVATE:
             raise SoftwareAccessDeniedError("This software is private and cannot be purchased.")
-        if software.price_cents <= 0:
+        if software.price_cents <= 0: # AGENT NOTE// Is this logic true? Should we allow free software to be "purchased" for tracking purposes, or should we just not require checkout at all?
             raise SoftwareDomainError("This software is free and does not require checkout.")
         if self.has_purchase(software_id=software_id, user_id=user_id):
             raise SoftwareDomainError("You already own this software.")
-
+        # Belongs to billing domain, but we need to check for existing pending payments to avoid creating duplicates if user retries checkout before confirming payment
         existing = await self.session.scalar(
             select(SoftwarePaymentModel).where(
                 SoftwarePaymentModel.software_id == str(software.id),

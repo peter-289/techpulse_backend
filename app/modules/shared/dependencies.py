@@ -1,14 +1,16 @@
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
+from redis.asyncio import Redis
 
 from app.core.config import settings
 
 from app.infrastructure.database.db_setup import SessionLocal
-from app.modules.security.abuse_protection import abuse_protection
-from app.core.config import settings
-from app.exceptions.exceptions import PermissionError
 from app.infrastructure.database.models.user import User
+from app.infrastructure.redis.client import redis_manager
+from app.modules.security.abuse_protection import AbuseProtection
+
+
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
@@ -136,7 +138,14 @@ def require_role(role: str):
 
 
 # Database dependency
-# Get async database
 async def get_db():
     async with SessionLocal() as session:
         yield session
+
+# === GET REDIS CLIENT ===
+def get_redis() -> Redis | None:
+    return redis_manager.client
+
+# === GET ABUSE PROTECTION ===
+def get_abuse_protection(redis_client=Depends(get_redis)) -> AbuseProtection:
+    return AbuseProtection(redis_client)

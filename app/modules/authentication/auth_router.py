@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.authentication.auth_service import AuthService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.user.user_schema import ProfileResponse
-from app.modules.shared.dependencies import get_db
+from app.modules.shared.dependencies import get_db, get_abuse_protection
 from app.core.config import settings
-from app.modules.security.abuse_protection import abuse_protection
+from app.modules.security.abuse_protection import AbuseProtection
 
 router = APIRouter(
     prefix="/api/v1/auth",
@@ -22,11 +22,18 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 # Get auth service
-def get_service(session: AsyncSession = Depends(get_db))->AuthService:
+def get_service(
+        session: AsyncSession = Depends(get_db), 
+        abuse: AbuseProtection=Depends(get_abuse_protection)
+    )->AuthService:
     uow = UnitOfWork(session=session)
-    return AuthService(uow)
+    return AuthService(uow=uow, abuse_protection=abuse)
+
+
+
 
 # Rate limiting functionality
+"""
 def _enforce_rate_limit(
     *,
     request: Request,
@@ -49,6 +56,8 @@ def _enforce_rate_limit(
             detail="Too many requests. Please try again later.",
             headers={"Retry-After": str(retry_after)},
         )
+
+"""
 
 def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
     access_max_age = settings.LOGIN_TOKEN_EXPIRE_MINUTES * 60
@@ -97,22 +106,20 @@ async def login(
       ):
     username = (form_data.username or "").strip()
     password = form_data.password
-    _enforce_rate_limit(
-        request=request,
-        scope="auth_login",
-        limit=settings.AUTH_LOGIN_RATE_LIMIT,
-        window_seconds=settings.AUTH_LOGIN_WINDOW_SECONDS,
-        identifier=username,
-    )
+    
 
-    user, access_token = await service.authenticate_user(username, password)
     user_agent = request.headers.get("user-agent") if request else None
     ip_address = request.client.host if request and request.client else None
+    
+    user, access_token = await service.login(username, password, ip_address)
     refresh_token, _session = await service.create_session(
         user_id=user.id,
         user_agent=user_agent,
         ip_address=ip_address,
     )
+    
+
+
     request.state.audit_actor_user_id = user.id
     # Set cookies
     _set_auth_cookies(response, access_token, refresh_token)
@@ -142,12 +149,7 @@ async def refresh_session(
     response: Response,
     service: AuthService = Depends(get_service),
 ):
-    _enforce_rate_limit(
-        request=request,
-        scope="auth_refresh",
-        limit=settings.AUTH_REFRESH_RATE_LIMIT,
-        window_seconds=settings.AUTH_REFRESH_WINDOW_SECONDS,
-    )
+    
     # Get refresh token from cookie
     has_access_cookie = bool(request.cookies.get(settings.ACCESS_COOKIE_NAME)) if request else False
     refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME) if request else None
@@ -210,7 +212,8 @@ async def verify_email(
 def verify_page():
     template_path = (
         Path(__file__).resolve().parents[2]
-        / "services"
+        / "infrastructure"
+        / "email"
         / "email_service"
         / "templates"
         / "verification_page.html"
@@ -229,15 +232,8 @@ async def request_password_reset(
     background_tasks: BackgroundTasks,
     email: str = Form(...),
     service: AuthService = Depends(get_service),
+    abuse: AbuseProtection = Depends(get_abuse_protection)
 ):
-    # Enforce rate limiting
-    _enforce_rate_limit(
-        request=request,
-        scope="auth_password_reset_request",
-        limit=settings.AUTH_PASSWORD_RESET_REQUEST_RATE_LIMIT,
-        window_seconds=settings.AUTH_PASSWORD_RESET_REQUEST_WINDOW_SECONDS,
-        identifier=email,
-    )
     detail = await service.request_password_reset(email=email, background_tasks=background_tasks)
     return {"detail": detail}
 
@@ -249,18 +245,15 @@ async def confirm_password_reset(
     new_password: str = Form(...),
     confirm_password: str = Form(...),
     service: AuthService = Depends(get_service),
+    abuse: AbuseProtection = Depends(get_abuse_protection)
 ):
-    _enforce_rate_limit(
-        request=request,
-        scope="auth_password_reset_confirm",
-        limit=settings.AUTH_PASSWORD_RESET_CONFIRM_RATE_LIMIT,
-        window_seconds=settings.AUTH_PASSWORD_RESET_CONFIRM_WINDOW_SECONDS,
-    )
-    await service.reset_password(
+
+    user = await service.reset_password(
         token=token,
         new_password=new_password,
         confirm_password=confirm_password,
     )
+   
     return {"detail": "Password reset successful"}
 
 # Password reset page
@@ -268,7 +261,8 @@ async def confirm_password_reset(
 def password_reset_page(token: str):
     template_path = (
         Path(__file__).resolve().parents[2]
-        / "services"
+        / "infrastructure"
+        / "email"
         / "email_service"
         / "templates"
         / "password_reset_page.html"

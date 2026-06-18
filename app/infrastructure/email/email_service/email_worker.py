@@ -10,6 +10,7 @@ from app.infrastructure.email.email_service.verification_recovery import (
     mark_verification_email_sent,
 )
 
+logger = logging.getLogger(__name__)
 
 def queue_verification_email(
     background_tasks: BackgroundTasks,
@@ -18,13 +19,17 @@ def queue_verification_email(
     name: str,
     user_id: int | None = None,
 ) -> None:
-    background_tasks.add_task(
-        _send_verification_email_with_retries,
-        token,
-        email,
-        name,
-        user_id,
-    )
+    try:
+        background_tasks.add_task(
+             _send_verification_email_with_retries,
+             token,
+             email,
+             name,
+             user_id,
+        )
+        logger.info("Added email to queue.")
+    except Exception as exc:
+        logger.warning("Failed add task in background worker!: ", exc)
 
 
 async def _send_verification_email_with_retries(
@@ -40,17 +45,17 @@ async def _send_verification_email_with_retries(
         try:
             await send_verification_email(token=token, email=email, name=name)
             if user_id is not None:
-                mark_verification_email_sent(user_id=user_id)
+                await mark_verification_email_sent(user_id=user_id)
             return
         except Exception as exc:
             if user_id is not None:
-                mark_verification_email_failed(
+                await mark_verification_email_failed(
                     user_id=user_id,
                     error_message=str(exc),
                     override_retry_count=attempt,
                 )
             if attempt >= max_attempts:
-                logging.error(
+                logger.error(
                     "[-] Failed to send verification email to %s after %s attempts: %s",
                     email,
                     attempt,
@@ -61,7 +66,7 @@ async def _send_verification_email_with_retries(
             # Exponential backoff with full jitter
             cap = min(max_delay_seconds, base_delay_seconds * (2 ** (attempt - 1)))
             delay = random.uniform(0, cap)
-            logging.warning(
+            logger.warning(
                 "[!] Email send attempt %s failed for %s. Retrying in %.1f seconds.",
                 attempt,
                 email,

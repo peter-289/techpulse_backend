@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -6,7 +6,8 @@ from .user_schema import UserCreate, UserResponse, UserRead
 from .user_service import UserService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.authentication.auth_service import AuthService
-from app.modules.shared.dependencies import require_role, get_current_user, get_db
+from app.modules.shared.dependencies import require_role, get_current_user, get_db, get_abuse_protection
+from app.modules.security.abuse_protection import AbuseProtection
 
 from app.exceptions.exceptions import DomainError
 
@@ -19,28 +20,35 @@ router = APIRouter(
 
 
 # Get User Service
-def get_service(db: AsyncSession = Depends(get_db))->UserService:
+def get_service(
+        db: AsyncSession = Depends(get_db), 
+        abuse_protection: AbuseProtection = Depends(get_abuse_protection)
+        )->UserService:
     uow = UnitOfWork(session=db)
-    return UserService(uow=uow)
+    return UserService(uow=uow, abuse_protection=abuse_protection)
 
-def get_auth_service(db: AsyncSession=Depends(get_db))->AuthService:
+def get_auth_service(
+        db: AsyncSession=Depends(get_db),
+        abuse_protection: AbuseProtection = Depends(get_abuse_protection)
+        )->AuthService:
     uow = UnitOfWork(session=db)
-    return AuthService(uow)
+    return AuthService(uow=uow, abuse_protection=abuse_protection)
 
 # Registration route
 @router.post("/users", response_model=UserResponse, status_code=201)
 async def register_user(
+    request: Request,
     payload: UserCreate,
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_service),
     auth_service: AuthService = Depends(get_auth_service)
     ):
  
-    user = await service.create_user(payload)
+    user = await service.create_user(request, payload=payload)
     try:
         auth_service.enqueue_verification_email(background_tasks, payload=user)
         logger.info("User registered successfully", extra={"user_id": user.id, "email": user.email})
-        logger.warning("Email verification is currently disabled, skipping email queueing", extra={"user_id": user.id})
+        #logger.warning("Email verification is currently disabled, skipping email queueing", extra={"user_id": user.id})
     except DomainError as exc:
         logger.warning("Failed to queue verification email", extra={"user_id": user.id, "error": str(exc)})
     return user

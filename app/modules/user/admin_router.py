@@ -39,7 +39,7 @@ def _tail_lines(path: Path, lines: int) -> list[str]:
 @router.get("/logs", status_code=200)
 def get_logs(
     lines: int = Query(200, ge=1, le=1000),
-    _admin: dict = Depends(require_role("admin")),
+    _admin: dict = Depends(require_role("ADMIN")),
 ):
     log_path = Path(settings.LOG_FILE_PATH)
     return {
@@ -54,7 +54,7 @@ async def list_security_alerts(
     only_unacknowledged: bool = Query(True),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(require_role("admin")),
+    _admin: dict = Depends(require_role("ADMIN")),
 ):
     stmt = select(SecurityAlert).order_by(SecurityAlert.created_at.desc()).limit(limit)
     if only_unacknowledged:
@@ -87,7 +87,7 @@ async def list_security_alerts(
 async def acknowledge_security_alert(
     alert_id: int = ApiPath(..., ge=1),
     db: AsyncSession = Depends(get_db),
-    admin: dict = Depends(require_role("admin")),
+    admin: dict = Depends(require_role("ADMIN")),
 ):
     alert = await db.get(SecurityAlert, alert_id)
     if not alert:
@@ -107,7 +107,7 @@ async def list_audit_events(
     actor_user_id: int | None = Query(None, ge=1),
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(require_role("admin")),
+    _admin: dict = Depends(require_role("ADMIN")),
 ):
     stmt = select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(limit)
     if event_type:
@@ -141,7 +141,7 @@ async def list_cookie_activity(
     actor_user_id: int | None = Query(None, ge=1),
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(require_role("admin")),
+    _admin: dict = Depends(require_role("ADMIN")),
 ):
     tracked_types = (
         "cookie.consent.accepted",

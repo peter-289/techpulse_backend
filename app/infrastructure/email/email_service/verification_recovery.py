@@ -2,17 +2,24 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
+from fastapi import Depends
 
 from app.core.config import settings
-from app.modules.security.token_manager import create_email_verification_token
+from app.modules.security.abuse_protection import AbuseProtection
+from app.modules.security.token_manager import TokenManager
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.db_setup import SessionLocal
 from app.infrastructure.database.models.enums import UserStatus
 from app.infrastructure.email.email_service.email_service import send_verification_email
+from app.modules.shared.dependencies import get_redis
 
 
 logger = logging.getLogger(__name__)
 
+def get_token_manager(abuse_protection: AbuseProtection = Depends(get_redis)) -> TokenManager:
+    return TokenManager(abuse_protection=abuse_protection)
+
+token_manager = Depends(get_token_manager)
 
 
 def compute_recovery_delay_seconds(
@@ -104,7 +111,7 @@ async def process_unverified_users_once() -> None:
         return
 
     for candidate in candidates:
-        token = create_email_verification_token(candidate["id"])
+        token = token_manager.create_email_verification_token(candidate["id"])
         try:
             await send_verification_email(
                 token=token,

@@ -16,6 +16,7 @@ from app.modules.software_management.software_schema import (
     SoftwareUploadResponse,
     SoftwareVersionRead,
 )
+from .utils import _payment_item, _software_item, _version_item, _error
 from app.modules.software_management.software_service import SoftwareService
 
 router = APIRouter(prefix="/api/v1/software-management", tags=["software-management"])
@@ -25,76 +26,6 @@ def get_service(db: AsyncSession = Depends(get_db)) -> SoftwareService:
     return SoftwareService(db)
 
 
-def _category(description: str) -> str:
-    for line in (description or "").splitlines(keepends=True):
-        if line.lower().startswith("category:"):
-            return line.split(":", 1)[1].strip().lower() or "others"
-    return "others"
-
-
-def _software_item(software: Software, *, viewer_user_id: int) -> SoftwareRead:
-    latest = software.latest_downloadable()
-    viewer = SoftwareService.actor_uuid(viewer_user_id)
-    return SoftwareRead(
-        id=str(software.id),
-        name=software.name,
-        description=software.description,
-        owner_id=SoftwareService.actor_int(software.owner_id),
-        is_public=software.visibility.value == "public",
-        price_cents=software.price_cents,
-        currency=software.currency,
-        viewer_has_access=software.owner_id == viewer or software.price_cents == 0,
-        category=_category(software.description),
-        latest_version=str(latest.number) if latest else None,
-        download_count=sum(version.download_count for version in software.versions),
-        created_at=software.created_at.isoformat(),
-        updated_at=software.updated_at.isoformat(),
-    )
-
-
-def _version_item(version: Version) -> SoftwareVersionRead:
-    artifact = version.artifact
-    return SoftwareVersionRead(
-        id=str(version.id),
-        software_id=str(version.software_id),
-        version=str(version.number),
-        is_published=version.status.value in {"published", "deprecated"},
-        status=version.status.value,
-        download_count=version.download_count,
-        release_notes=version.release_notes,
-        created_at=version.created_at.isoformat(),
-        published_at=version.published_at.isoformat() if version.published_at else None,
-        file_hash=artifact.sha256 if artifact else None,
-        size_bytes=artifact.size_bytes if artifact else None,
-        content_type=artifact.mime_type if artifact else None,
-        file_name=artifact.filename if artifact else None,
-        artifact_status=artifact.status.value if artifact else None,
-        quarantine_reason=artifact.quarantine_reason if artifact else None,
-    )
-
-
-def _payment_item(payment) -> SoftwareCheckoutRead:
-    return SoftwareCheckoutRead(
-        id=payment.id,
-        software_id=payment.software_id,
-        buyer_id=SoftwareService.actor_int(UUID(payment.buyer_id)),
-        owner_id=SoftwareService.actor_int(UUID(payment.owner_id)),
-        amount_cents=payment.amount_cents,
-        currency=payment.currency,
-        status=payment.status,
-        provider=payment.provider,
-        provider_reference=payment.provider_reference,
-        created_at=payment.created_at.isoformat(),
-        completed_at=payment.completed_at.isoformat() if payment.completed_at else None,
-    )
-
-
-def _error(exc: SoftwareDomainError) -> HTTPException:
-    if isinstance(exc, SoftwareAccessDeniedError):
-        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, SoftwareNotFoundError):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 # List softwares for a user
 @router.get("", response_model=list[SoftwareRead])
@@ -128,7 +59,7 @@ async def upload_software_package(
     current_user: dict = Depends(get_current_user),
 ) -> SoftwareUploadResponse:
     
-    uploaded = service.spool_file(file.file, file.filename or "package.bin")
+    uploaded = await service.spool_file(file.file, file.filename or "package.bin")
     try:
         software, created_version = service.upload_package(
             user_id=int(current_user["user_id"]),
@@ -166,6 +97,8 @@ async def update_pricing(
 ) -> SoftwareRead:
     user_id = int(current_user["user_id"])
     try:
+        raise NotImplementedError("Method not implemented.")
+        """
         software = await service.update_pricing(
             software_id=software_id,
             user_id=user_id,
@@ -173,11 +106,13 @@ async def update_pricing(
             currency=payload.currency,
             is_admin=str(current_user.get("role", "")).upper() == "ADMIN",
         )
+        """
+        
     except SoftwareDomainError as exc:
         raise _error(exc) from exc
     return _software_item(software, viewer_user_id=user_id).model_copy(update={"viewer_has_access": True})
 
-
+# NOT YET IMPLEMENTED
 @router.post("/{software_id}/checkout", response_model=SoftwareCheckoutRead, status_code=status.HTTP_201_CREATED)
 async def create_checkout(
     software_id: UUID,
@@ -185,7 +120,8 @@ async def create_checkout(
     current_user: dict = Depends(get_current_user),
 ) -> SoftwareCheckoutRead:
     try:
-        payment = await service.create_checkout(software_id=software_id, user_id=int(current_user["user_id"]))
+        raise NotImplementedError("Method not implemented.")
+        #payment = await service.create_checkout(software_id=software_id, user_id=int(current_user["user_id"]))
     except SoftwareDomainError as exc:
         raise _error(exc) from exc
     return _payment_item(payment)
@@ -306,7 +242,7 @@ async def download_version(
 async def admin_packages(
     limit: int = Query(100, ge=1, le=200),
     service: SoftwareService = Depends(get_service),
-    admin: dict = Depends(require_role("admin")),
+    admin: dict = Depends(require_role("ADMIN")),
 ) -> list[SoftwareRead]:
     user_id = int(admin["user_id"])
     items = await service.list_visible(user_id=user_id, limit=limit)
@@ -316,7 +252,7 @@ async def admin_packages(
 @router.get("/admin/summary", response_model=SoftwareSummary)
 async def admin_summary(
     service: SoftwareService = Depends(get_service),
-    admin: dict = Depends(require_role("admin")),
+    admin: dict = Depends(require_role("ADMIN")),
 ) -> SoftwareSummary:
     items = await service.list_visible(user_id=int(admin["user_id"]), limit=200)
     versions = [version for software in items for version in software.versions]
@@ -327,7 +263,7 @@ async def admin_summary(
         total_downloads=sum(version.download_count for version in versions),
     )
 
-
+# Download from local storage.
 @router.get("/storage/download/{storage_key:path}")
 async def internal_storage_download(
     storage_key: str,

@@ -39,6 +39,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             status_code = 500
             raise
         finally:
+        
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             client_ip = request.client.host if request.client else "-"
             path_with_query = request.url.path

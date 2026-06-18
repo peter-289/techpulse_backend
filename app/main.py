@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
+
 from app.exceptions.handlers import register_exception_handlers
 from app.core.config import settings
 from app.modules.security.audit_middleware import AuditMiddleware
@@ -31,7 +32,8 @@ app = FastAPI(
     title="TechPulse Backend",
     description="This is a backend service for Tech pulse web application.",
     version="1.0.0",
-    lifespan=app_lifespan
+    lifespan=app_lifespan,
+    proxy_headers=True
 )
 
 
@@ -64,7 +66,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(AuditMiddleware)
+app.add_middleware(AuditMiddleware, )
 
 
 # ===========================================================================================

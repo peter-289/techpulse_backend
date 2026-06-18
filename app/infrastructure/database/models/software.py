@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from .enums import SoftwareVisibility, VersionStatus, SoftwareStatus
 
 from app.infrastructure.database.db_setup import Base
 
@@ -18,7 +19,8 @@ class SoftwareModel(Base):
     owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[SoftwareStatus] = mapped_column(String(16), nullable=False, default=SoftwareStatus.ACTIVE)
+    visibility: Mapped[SoftwareVisibility] = mapped_column(String(16), nullable=False, default=SoftwareVisibility.PRIVATE)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -75,9 +77,9 @@ class SoftwareVersionModel(Base):
     )
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     release_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    visibility: Mapped[SoftwareVisibility] = mapped_column(String(16), nullable=False, default=SoftwareVisibility.PRIVATE)
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="DRAFT")
+    status: Mapped[VersionStatus] = mapped_column(String(16), nullable=False, default=VersionStatus.DRAFT)
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

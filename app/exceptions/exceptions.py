@@ -37,3 +37,6 @@ class ExternalServiceError(DomainError):
     """Exception raised when an external dependency fails."""
     pass
 
+class TooManyRequestsError(DomainError):
+    """Exception raised when too many requests are made to an API."""
+    pass

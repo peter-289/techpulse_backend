@@ -35,3 +35,6 @@ class SoftwareValidationError(SoftwareDomainError):
 
     def __str__(self) -> str:
         return self.message
+
+class RepositoryUnavailableError(SoftwareDomainError):
+    pass

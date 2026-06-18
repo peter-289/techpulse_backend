@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/projects", tags=["Project Hub"])
 def get_service(db: AsyncSession = Depends(get_db)) -> ProjectHubService:
     return ProjectHubService(UnitOfWork(session=db))
 
-
+# 
 @router.post("", response_model=ProjectRead, status_code=201)
 async def create_project(
     name: str = Form(...),
@@ -27,7 +27,6 @@ async def create_project(
     service: ProjectHubService = Depends(get_service),
     current_user: dict = Depends(get_current_user),
 ):
-    content = file.file.read()
     return await service.create_project(
         user_id=int(current_user["user_id"]),
         name=name,
@@ -35,7 +34,7 @@ async def create_project(
         version=version,
         is_public=is_public,
         filename=file.filename or "project.bin",
-        content=content,
+        source=file.file,
     )
 
 
