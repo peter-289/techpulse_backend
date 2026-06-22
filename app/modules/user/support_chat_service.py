@@ -6,7 +6,7 @@ import requests
 from app.core.config import settings
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.exceptions.exceptions import ExternalServiceError, ValidationError
-from app.infrastructure.database.models.chat_message import ChatMessage
+from app.infrastructure.database.models.user import ChatMessage
 
 logger = logging.getLogger(__name__)
 

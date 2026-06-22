@@ -4,6 +4,7 @@ from uuid import UUID
 from abc import ABC, abstractmethod
 import logging
 from uuid import UUID
+from datetime import datetime, timezone
 
 
 from sqlalchemy import or_, select, update, func
@@ -12,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.modules.software_management.software import Software
+from app.modules.software_management.software.software import Software
 from app.infrastructure.database.models.software import SoftwareModel, SoftwareVersionModel
-from app.modules.software_management.utils import _software_to_entity, _software_to_model
-from app.modules.software_management.software.exceptions import RepositoryUnavailableError
+from .software.software import _software_to_entity, _software_to_model
+from app.modules.software_management.software.exceptions import RepositoryUnavailableError, SoftwareNotFoundError, SoftwareDomainError
 from app.modules.software_management.software.value_objects import SoftwareCard, OwnedSoftwareCard  
+from app.modules.software_management.software.enums import SoftwareStatus, SoftwareVisibility
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -34,27 +36,10 @@ class ISoftwareRepository(ABC):
     # ─── Single item operations ───
     @abstractmethod
     async def get(self, software_id: UUID) -> Software | None:
+
         """Get software by ID with all relationships loaded."""
         ...
-
-    @abstractmethod
-    async def get_by_slug(self, slug: str) -> Software | None:
-        """Get software by URL slug."""
-        ...
-
-    @abstractmethod
-    async def exists(self, software_id: UUID) -> bool:
-        """Fast existence check without loading full model."""
-        """Persist or update software."""
-        ...
-        ...
-
-
-    @abstractmethod
-    async def soft_delete(self, software_id: UUID) -> None:
-        """Mark as deleted."""
-        ...
-
+ 
     # ─── List operations ───
     @abstractmethod
     async def list_marketplace(
@@ -81,12 +66,10 @@ class ISoftwareRepository(ABC):
         """
         ...
 
+    # ----- Delete software -----------
     @abstractmethod
-    async def list_by_ids(
-        self,
-        software_ids: list[UUID],
-    ) -> list[Software]:
-        """Batch fetch by IDs. Order not guaranteed."""
+    async def soft_delete(self, software_id: UUID) -> None:
+        """Mark as deleted."""
         ...
 
     # ─── Search ───
@@ -101,17 +84,6 @@ class ISoftwareRepository(ABC):
         offset: int = 0,
     ) -> tuple[list[Software], int]:
         """Full-text + faceted search. Returns (items, total)."""
-        ...
-
-    # ─── Analytics ───
-    @abstractmethod
-    async def count(
-        self,
-        *,
-        owner_id: UUID | None = None,
-        is_public: bool | None = None,
-    ) -> int:
-        """Count software matching filters."""
         ...
 
 
@@ -189,7 +161,7 @@ class SoftwareRepository(ISoftwareRepository):
                 SoftwareVersionModel,
                 SoftwareModel.latest_version_id == SoftwareVersionModel.id,
             )
-            .where(SoftwareModel.is_public.is_(True))
+            .where(SoftwareModel.visibility == SoftwareVisibility.PUBLIC)
             .order_by(
                 SoftwareModel.created_at.desc(),
                 SoftwareModel.id.desc(),  # stable pagination
@@ -285,11 +257,23 @@ class SoftwareRepository(ISoftwareRepository):
                logger.exception("Failed to list owned software by: %s, %s", owner_id, exc)
                raise RepositoryUnavailableError(f"Failed to software for owner: {owner_id}")
 
-
-    async def increment_download_count(self, version_id: UUID) -> None:
+    async def soft_delete(self, software_id: UUID, deleted_by: UUID) -> None:
         stmt = (
-            update(SoftwareVersionModel)
-            .where(SoftwareVersionModel.id == str(version_id))
-            .values(download_count=SoftwareVersionModel.download_count + 1)
+            select(
+                SoftwareModel
+            )
+            .where(SoftwareModel.id == software_id)
         )
-        await self.session.execute(stmt)
+        software = await self.session.execute(stmt)
+        if not software:
+            raise SoftwareNotFoundError(f"Software with id: {software_id} not found.")
+        
+        if software.state == SoftwareStatus.DELETED:
+            raise SoftwareDomainError("Software has already been deleted.")
+
+        software.status = SoftwareStatus.DELETED
+        software.deleted_at = datetime.now(timezone.utc)
+        software.deleted_by = deleted_by
+
+        await self.session.flush()
+        

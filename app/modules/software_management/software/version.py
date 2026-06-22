@@ -58,13 +58,21 @@ class Version:
             self.published_at = utc_now()
         self._touch()
 
+    def _ensure_modifiable(self) -> None:
+        """ Ensure a version is modifiable before performing any operation."""
+        
+
+
     def deprecate(self) -> None:
         """ Deprecate a version"""
         if self.status != VersionStatus.PUBLISHED:
             raise InvalidStateTransitionError("Only published versions can be deprecated.")
         self.status = VersionStatus.DEPRECATED
         self._touch()
-
+    
+    def remove(self) -> None:
+        """ Remove a version"""
+       
     def revoke(self) -> None:
         """ Revoke a version"""
         if self.status == VersionStatus.REVOKED:

@@ -5,13 +5,17 @@ class SoftwareStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
     ARCHIVED = "archived"
+    DELETED = "deleted"
 
 
 class VersionStatus(StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
     DEPRECATED = "deprecated"
-    REVOKED = "revoked"
+    REVOKED = "revoked" 
+    DELETED = "deleted"
+    
+
 
 
 class ArtifactStatus(StrEnum):

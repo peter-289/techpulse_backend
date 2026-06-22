@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.database.models.chat_message import ChatMessage
+from app.infrastructure.database.models.user import ChatMessage
 
 
 class ChatMessageRepo:

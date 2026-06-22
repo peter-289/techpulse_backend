@@ -16,7 +16,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.software_management.software import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
+from app.modules.software_management.software.software import Software
+from app.modules.software_management.software.artifact import Artifact
+from app.modules.software_management.software.version import Version
+from app.modules.software_management.software.value_objects import SemVer
+from app.modules.software_management.software.enums import SoftwareVisibility, VersionStatus, ArtifactStatus
 from app.modules.software_management.software.events import malware_scan_failed, malware_scan_requested, malware_scan_success
 from app.modules.software_management.software.exceptions import SoftwareAccessDeniedError, SoftwareDomainError, SoftwareNotFoundError
 from app.infrastructure.database.models.payment import SoftwarePaymentModel, SoftwarePurchaseModel
@@ -133,7 +137,7 @@ class SoftwareService:
         total = 0
         limit = max_size_bytes or settings.PACKAGE_UPLOAD_MAX_SIZE_BYTES
         suffix = Path(filename or "package.bin").suffix
-        temp = NamedTemporaryFile(delete=False, suffix=suffix)
+        temp = NamedTemporaryFile(delete=False, suffix=suffix) # Temporary file handling
         temp_path = Path(temp.name)
         try:
             with temp:
@@ -157,9 +161,9 @@ class SoftwareService:
             temp_path.unlink(missing_ok=True)
             raise
 
-    async def list_visible(self, *, user_id: int, limit: int = 100) -> list[Software]:
+    async def list_visible(self, *, user_id: int, limit: int = 100, offset: int = 0) -> list[Software]:
         """ List packages that are visible for users."""
-        result = await self.repository.list_visible_for_user(self.actor_uuid(user_id), limit=limit)
+        result = await self.repository.list_owned(self.actor_uuid(user_id), limit=limit, offset=offset)
         return result
 
     async def get(self, software_id: UUID) -> Software:
@@ -361,7 +365,7 @@ class SoftwareService:
         version = software.get_version_by_semver(SemVer.parse(version_number))
         if not version.is_downloadable() or version.artifact is None:
             raise SoftwareNotFoundError("Requested version is not downloadable.")
-        await self.repository.increment_download_count(version.id)
+        # await self.repository.increment_download_count(version.id)
         await self.session.commit()
         return self.storage.create_download_url(version.artifact.storage_key)
 
@@ -459,3 +463,7 @@ class SoftwareService:
         await self.session.commit()
         await self.session.refresh(payment)
         return payment
+
+
+
+

@@ -16,7 +16,7 @@ from app.modules.software_management.software_schema import (
     SoftwareUploadResponse,
     SoftwareVersionRead,
 )
-from .utils import _payment_item, _software_item, _version_item, _error
+from .software.software import _payment_item, _software_item, _version_item, _error
 from app.modules.software_management.software_service import SoftwareService
 
 router = APIRouter(prefix="/api/v1/software-management", tags=["software-management"])

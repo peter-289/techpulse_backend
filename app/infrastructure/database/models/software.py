@@ -26,6 +26,8 @@ class SoftwareModel(Base):
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     versions: Mapped[list["SoftwareVersionModel"]] = relationship(
         back_populates="software",
@@ -86,6 +88,7 @@ class SoftwareVersionModel(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deprecated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
 
     software: Mapped[SoftwareModel] = relationship(back_populates="versions", lazy="selectin")
     artifact: Mapped[SoftwareArtifactModel | None] = relationship(lazy="selectin")

@@ -56,6 +56,7 @@ class SoftwareStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
     ARCHIVED = "archived"
+    DELETED = "deleted"
 
 class VersionStatus(StrEnum):
     DRAFT = "draft"
