@@ -1,23 +1,25 @@
-from enum import Enum, auto, StrEnum
+from enum import auto, StrEnum
 
 # Gender Enum
-class GenderEnum(str, Enum):
+class GenderEnum(StrEnum):
     MALE = "MALE"
     FEMALE = "FEMALE"
     NON_BINARY = "NON_BINARY"
     PREFER_NOT_TO_SAY = "PREFER_NOT_TO_SAY"
 
-class UserStatus(str, Enum):
+
+class UserStatus(StrEnum):
     UNAPPROVED = "UNAPPROVED"
     VERIFIED = "VERIFIED"
     SUSPENDED = "SUSPENDED"  
 
-class RoleEnum(str, Enum): 
+
+class RoleEnum(StrEnum): 
     ADMIN = "ADMIN"
     USER = "USER"
 
 
-class AppState(Enum):
+class AppState(StrEnum):
     BOOTING = auto()
     CONFIG_VALIDATED = auto()
     DB_MIGRATIONS_RUNNING = auto()
@@ -40,26 +42,73 @@ class AlertRuleCode(StrEnum):
 
 
 class AlertSeverity(StrEnum):
+    CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
 
 class CookieConsent(StrEnum):
     ACCEPTED = "accepted"
     DECLINED = "declined"
 
+
 class SoftwareVisibility(StrEnum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
+    PUBLIC = "public"
+    PRIVATE = "private"
+
+
+class KnownCategorySlug(StrEnum):
+    DEV_TOOLS = "dev-tools"
+    PRODUCTIVITY = "productivity"
+    DESIGN = "design"
+    EDUCATION = "education"
+    ENTERTAINMENT = "entertainment"
+    FINANCE = "finance"
+    HEALTH_FITNESS = "health-fitness"
+    LIFESTYLE = "lifestyle"
+    NEWS = "news"
+    SOCIAL_MEDIA = "social-media"
+    UTILITIES = "utilities"
+
+
+class PurchaseStatus(StrEnum):
+    ACTIVE = "active"
+    REFUNDED = "refunded"
+    CANCELED = "canceled"
+
+
+class PaymentStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
 
 class SoftwareStatus(StrEnum):
+    DRAFT = "draft"
     ACTIVE = "active"
     SUSPENDED = "suspended"
     ARCHIVED = "archived"
     DELETED = "deleted"
 
+
 class VersionStatus(StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
     DEPRECATED = "deprecated"
-    REVOKED = "revoked"
+    REVOKED = "revoked" 
+    DELETED = "deleted"
+    
+
+class ArtifactStatus(StrEnum):
+    UPLOADING = "uploading"
+    ACTIVE = "active"
+    DELETED = "deleted"
+    QUARANTINED = "quarantined"
+
+
+class AccessPolicy(StrEnum):
+    FREE = "free"
+    PURCHASE_REQUIRED = "purchase_required"
+    OWNER_ONLY = "owner_only"

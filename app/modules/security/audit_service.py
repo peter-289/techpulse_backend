@@ -9,7 +9,7 @@ from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.exceptions.exceptions import DomainError
 from app.infrastructure.database.models.audit_event import AuditEvent
 from app.infrastructure.database.models.security_alert import SecurityAlert
-from app.infrastructure.database.models.enums import AlertRuleCode, AlertSeverity, AuditEventType
+from app.modules.shared.enums import AlertRuleCode, AlertSeverity, AuditEventType
 
 logger = logging.getLogger(__name__)
 

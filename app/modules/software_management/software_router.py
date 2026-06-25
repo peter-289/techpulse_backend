@@ -18,6 +18,9 @@ from app.modules.software_management.software_schema import (
 )
 from .software.software import _payment_item, _software_item, _version_item, _error
 from app.modules.software_management.software_service import SoftwareService
+from app.modules.software_management.search_service import SearchService
+from app.infrastructure.database.models.category import CategoryModel
+from sqlalchemy import select, func
 
 router = APIRouter(prefix="/api/v1/software-management", tags=["software-management"])
 
@@ -53,7 +56,7 @@ async def upload_software_package(
     version: str = Form("1.0.0"),
     is_public: bool = Form(True),
     price_cents: int = Form(0),
-    currency: str = Form("USD"),
+    currency: str = Form("KSH"),
     file: UploadFile = File(...),
     service: SoftwareService = Depends(get_service),
     current_user: dict = Depends(get_current_user),
@@ -236,6 +239,48 @@ async def download_version(
     except SoftwareDomainError as exc:
         raise _error(exc) from exc
     return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+
+# Search endpoint
+@router.get("/search")
+async def search(
+    q: str | None = Query(None, alias="q"),
+    category: str | None = Query(None, alias="category"),
+    tags: str | None = Query(None, alias="tags"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    service: SoftwareService = Depends(get_service),
+) -> dict:
+    """Search packages with optional category slug and comma-separated tags.
+
+    Returns items (software read dicts), scores, total, limit, offset.
+    """
+    # parse tags
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+    # resolve category slug to id
+    category_id = None
+    if category:
+        stmt = select(CategoryModel.id).where(func.lower(CategoryModel.slug) == category.lower())
+        cid = await service.session.scalar(stmt)
+        if cid:
+            category_id = cid
+
+    search_service = SearchService(repository=service.repository)
+    try:
+        results, total = await search_service.search(q, category_id=category_id, tags=tag_list, limit=limit, offset=offset)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    items = [
+        _software_item(r.software, viewer_user_id=int((service.actor_int(r.software.owner_id))))
+        .model_copy(update={"viewer_has_access": r.software.price_cents == 0 or r.software.owner_id == service.actor_uuid(0)})
+        for r in results
+    ]
+    scores = [r.score for r in results]
+
+    return {"items": [item.model_dump() for item in items], "scores": scores, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/admin/packages", response_model=list[SoftwareRead])

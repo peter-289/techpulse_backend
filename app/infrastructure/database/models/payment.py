@@ -4,6 +4,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConst
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.db_setup import Base
+from app.modules.shared.enums import PurchaseStatus, PaymentStatus
 
 
 class SoftwarePaymentModel(Base):
@@ -19,8 +20,8 @@ class SoftwarePaymentModel(Base):
     buyer_id: Mapped[str] = mapped_column(String(64), nullable=False)
     owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KSH")
+    status: Mapped[PaymentStatus] = mapped_column(String(20), nullable=False, default=PaymentStatus.PENDING.value)
     provider: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
     provider_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -42,5 +43,7 @@ class SoftwarePurchaseModel(Base):
     owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
     payment_id: Mapped[str] = mapped_column(ForeignKey("sms_payments.id", ondelete="CASCADE"), nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    status: Mapped[PurchaseStatus] = mapped_column(String(20), nullable=False, default=PurchaseStatus.ACTIVE.value  )
+    
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KSH")
     purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

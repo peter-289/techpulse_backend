@@ -1,6 +1,6 @@
 # ==== MODULAR VERSION ======
 from app.infrastructure.database.models.user import User
-from app.infrastructure.database.models.enums import UserStatus
+from app.modules.shared.enums import UserStatus
 from app.exceptions.exceptions import ConflictError
 
 from typing import Optional

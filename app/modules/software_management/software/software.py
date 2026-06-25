@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from .enums import SoftwareStatus, SoftwareVisibility
+from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility, AccessPolicy, ArtifactStatus, VersionStatus
 from .events import SoftwareEvent, VersionPublishedEvent, utc_now, version_published
 from .exceptions import InvalidStateTransitionError, SoftwareNotFoundError
 from .value_objects import SemVer
@@ -21,13 +21,21 @@ class Software:
     name: str
     description: str
     owner_id: UUID
-    status: SoftwareStatus
-    visibility: SoftwareVisibility
+    category_id: UUID | None = None
+
+    status: SoftwareStatus = SoftwareStatus.DRAFT
+    visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC
+    access_policy: AccessPolicy = AccessPolicy.FREE
+
     price_cents: int = 0
+    download_count: int = 0
     currency: str = "KSH"
+
     versions: list[Version] = field(default_factory=list)
+
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+
     deleted_by: UUID | None = None
     deleted_at: datetime | None = None
 
@@ -40,17 +48,22 @@ class Software:
         name: str,
         description: str,
         owner_id: UUID,
+        category_id: UUID | None = None,
         visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC,
+        access_policy: AccessPolicy = AccessPolicy.FREE,
         price_cents: int = 0,
         currency: str = "KSH",
     ) -> "Software":
+        """Create a new software instance."""
         return cls(
             id=uuid4(),
             name=name,
             description=description,
             owner_id=owner_id,
+            category_id=category_id,
             status=SoftwareStatus.DRAFT,
             visibility=visibility,
+            access_policy=access_policy,
             price_cents=max(0, int(price_cents)),
             currency=currency.upper()[:3] or "KSH",
         )
@@ -63,12 +76,14 @@ class Software:
 
     # Check if a software is modifiable.
     def _ensure_modifiable(self)-> None:
+        """Ensure that the software is in a modifiable state."""
         if self.status == SoftwareStatus.DELETED:
            raise InvalidStateTransitionError("Deleted software can not be modified.")
         
 
     # === PRICING MANAGEMENT ===
     def update_pricing(self, *, price_cents: int, currency: str = "KSH") -> None:
+        """Update the pricing of the software."""
         self._ensure_modifiable()
         self.price_cents = max(0, int(price_cents))
         self.currency = (currency or "KSH").upper()[:3]
@@ -77,6 +92,7 @@ class Software:
 
     # == SOFTWARE MANAGEMENT ===
     def rename(self, name: str) -> None:
+        """Rename the software. Name is required and cannot be empty."""
         self._ensure_modifiable()
         if not name:
             raise InvalidStateTransitionError("Name required.")
@@ -84,16 +100,19 @@ class Software:
         self._touch()
         
     def update_description(self, description: str) -> None:
+        """Update the description of the software."""
         self._ensure_modifiable()
         self.description = description.strip()
         self._touch()
 
     def change_visibility(self, visibility: SoftwareVisibility) -> None:
+        """Change the visibility of the software."""
         self._ensure_modifiable()
         self.visibility = visibility
         self._touch()
         
     def publish(self) -> None:
+        """Publish the software."""
         if self.status == SoftwareStatus.ACTIVE:
             return
         self._ensure_modifiable()
@@ -101,6 +120,8 @@ class Software:
         self._touch()
 
     def mark_deleted(self, *, actor_id: UUID, marked_at: datetime | None) -> None:
+        """Mark the software as deleted.
+           Deleted software is not modifiable and cannot be published."""
         self._ensure_modifiable()
         self.status = SoftwareStatus.DELETED
         self.deleted_at = marked_at or utc_now()
@@ -108,24 +129,34 @@ class Software:
         self._touch()
 
     def archive(self) -> None:
+        """Archive the software. 
+           Archived software is not modifiable and cannot be published."""
         if self.status == SoftwareStatus.ARCHIVED:
             return
         self._ensure_modifiable()
         self.status = SoftwareStatus.ARCHIVED
-
+        self._touch()
 
     def restore(self) -> None:
+        """Restore the software from archived or deleted state."""
         self._ensure_modifiable()
         if self.status == SoftwareStatus.ACTIVE:
             return
         self.status = SoftwareStatus.ACTIVE
         self.deleted_at = None
         self.deleted_by = None
-        
+        self._touch()
+    
+    def change_access_policy(self, access_policy: AccessPolicy) -> None:
+        """Change the access policy of the software."""
+        self._ensure_modifiable()
+        self.access_policy = access_policy
+        self._touch()
     
 
     # === VERSION MANAGEMENT ===
     def add_version(self, version: Version) -> None:
+        """Add a new version to the software."""
         self._ensure_modifiable()
         if version.software_id != self.id:
             raise InvalidStateTransitionError("Version/software ownership mismatch.")
@@ -135,6 +166,7 @@ class Software:
         self._touch()
 
     def get_version(self, version_id: UUID) -> Version:
+        """Get a version by its ID."""
         self._ensure_modifiable()
         for version in self.versions:
             if version.id == version_id:
@@ -142,6 +174,7 @@ class Software:
         raise SoftwareNotFoundError(f"Version {version_id} not found.")
 
     def get_version_by_semver(self, semver: SemVer) -> Version:
+        """Get a version by its semantic version."""
         self._ensure_modifiable()
         for version in self.versions:
             if version.number == semver:
@@ -149,6 +182,7 @@ class Software:
         raise SoftwareNotFoundError(f"Version {semver} not found.")
 
     def publish_version(self, version_id: UUID) -> VersionPublishedEvent:
+        """Publish a version of the software."""
         self._ensure_modifiable()
         version = self.get_version(version_id)
         version.publish()
@@ -158,20 +192,26 @@ class Software:
         return event
 
     def deprecate_version(self, version_id: UUID) -> None:
+        """Deprecate a version of the software."""
         self._ensure_modifiable()
         self.get_version(version_id).deprecate()
         self._touch()
 
     def revoke_version(self, version_id: UUID) -> None:
+        """Revoke a version of the software."""
         self._ensure_modifiable()
         self.get_version(version_id).revoke()
         self._touch()
     
     def remove_version(self, version_id: UUID) -> None:
-        self.versions.remove()
-        pass
+        """Remove a version of the software."""
+        self._ensure_modifiable()
+        version = self.get_version(version_id)
+        self.versions.remove(version)
+        self._touch()
 
     def latest_downloadable(self) -> Version | None:
+        """Get the latest downloadable version of the software."""
         self._ensure_modifiable()
         downloadable = [item for item in self.versions if item.is_downloadable()]
         if not downloadable:
@@ -181,11 +221,13 @@ class Software:
 
 
     def pull_events(self) -> list[SoftwareEvent]:
+        """Pull and clear the list of events for the software."""
         events = list(self._events)
         self._events.clear()
         return events
 
     def _touch(self) -> None:
+        """Update the updated_at timestamp to the current UTC time."""
         self.updated_at = utc_now()
 
 
@@ -194,7 +236,7 @@ from app.modules.software_management.software_schema import SoftwareRead, Softwa
 from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
 from app.modules.software_management.software.artifact import Artifact
 from .exceptions import SoftwareAccessDeniedError, SoftwareNotFoundError, SoftwareDomainError
-from .enums import ArtifactStatus, VersionStatus
+
 
 from fastapi import HTTPException, status
 
@@ -340,6 +382,7 @@ def _software_to_entity(model: SoftwareModel) -> Software:
         owner_id=UUID(model.owner_id),
         status=SoftwareStatus.ACTIVE,
         visibility=SoftwareVisibility.PUBLIC if model.is_public else SoftwareVisibility.PRIVATE,
+        category_id=UUID(model.category_id) if model.category_id else None,
         price_cents=model.price_cents or 0,
         currency=model.currency or "USD",
         versions=[_version_to_entity(item) for item in model.versions],
@@ -391,6 +434,7 @@ def _software_to_model(entity: Software) -> SoftwareModel:
         name=entity.name,
         description=entity.description,
         is_public=entity.visibility == SoftwareVisibility.PUBLIC,
+        category_id=entity.category_id,
         price_cents=entity.price_cents,
         currency=entity.currency,
         created_at=entity.created_at,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import shutil
@@ -20,19 +21,25 @@ from app.modules.software_management.software.software import Software
 from app.modules.software_management.software.artifact import Artifact
 from app.modules.software_management.software.version import Version
 from app.modules.software_management.software.value_objects import SemVer
-from app.modules.software_management.software.enums import SoftwareVisibility, VersionStatus, ArtifactStatus
-from app.modules.software_management.software.events import malware_scan_failed, malware_scan_requested, malware_scan_success
-from app.modules.software_management.software.exceptions import SoftwareAccessDeniedError, SoftwareDomainError, SoftwareNotFoundError
+from app.modules.shared.enums import SoftwareVisibility, VersionStatus, ArtifactStatus
+from app.modules.software_management.software.events import malware_scan_failed, malware_scan_success, malware_scan_requested
+from app.modules.software_management.software.exceptions import (
+    SoftwareAccessDeniedError,
+    SoftwareDomainError,
+    SoftwareNotFoundError,
+)
 from app.infrastructure.database.models.payment import SoftwarePaymentModel, SoftwarePurchaseModel
 from app.modules.software_management.software_repo import SoftwareRepository
 from app.infrastructure.external_apis.scanner_service.malware_scanner import MalwareScanner, get_malware_scanner
-from app.modules.billing.payment_provider import PaymentProvider, get_payment_provider
+from techpulse_backend.app.modules.billing.payment_service import PaymentProvider, get_payment_provider
+from app.infrastructure.database.unit_of_work import UnitOfWork
+from techpulse_backend.app.modules.billing.billing_service import BillingService
 
 
 @dataclass(frozen=True, slots=True)
 class UploadedFile:
-    """ Upload file data shape"""
-    filename: str 
+    """Upload file data shape."""
+    filename: str
     content_type: str
     size_bytes: int
     sha256: str
@@ -40,17 +47,21 @@ class UploadedFile:
 
 
 class LocalSoftwareStorage:
-    """
-     Storage management for local disk storage
-    """
-    def __init__(self, storage_root: str | Path, signing_secret: str, backend_url: str) -> None:
+    """Storage management for local disk storage."""
+
+    def __init__(
+        self,
+        storage_root: str | Path,
+        signing_secret: str,
+        backend_url: str,
+    ) -> None:
         self.root = Path(storage_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self._secret = signing_secret.encode("utf-8")
         self._backend_url = backend_url.rstrip("/")
 
     def resolve_path(self, storage_key: str) -> Path:
-        """ Resolve path if it exists using a storage key"""
+        """Resolve path if it exists using a storage key."""
         key = self._validate_storage_key(storage_key)
         target = (self.root / key).resolve()
         if not target.is_relative_to(self.root):
@@ -82,7 +93,14 @@ class LocalSoftwareStorage:
             f"{quote(key, safe='')}?expires={expires_at}&token={token}"
         )
 
-    def verify_signed_request(self, *, storage_key: str, expires: int, token: str, method: str) -> bool:
+    def verify_signed_request(
+        self,
+        *,
+        storage_key: str,
+        expires: int,
+        token: str,
+        method: str,
+    ) -> bool:
         key = self._validate_storage_key(storage_key)
         if expires < int(time.time()):
             return False
@@ -103,13 +121,12 @@ class LocalSoftwareStorage:
 class SoftwareService:
     def __init__(
         self,
-        session: AsyncSession,
         storage: LocalSoftwareStorage | None = None,
         payment_provider: PaymentProvider | None = None,
         malware_scanner: MalwareScanner | None = None,
+        unit_of_work: UnitOfWork | None = None,
+        billing_service: BillingService | None = None,
     ):
-        self.session = session
-        self.repository = SoftwareRepository(session)
         self.payment_provider = payment_provider or get_payment_provider()
         self.malware_scanner = malware_scanner or get_malware_scanner()
         self.storage = storage or LocalSoftwareStorage(
@@ -117,6 +134,12 @@ class SoftwareService:
             settings.SECRET_KEY,
             settings.BACKEND_URL,
         )
+        self.uow = unit_of_work
+        self.billing_service = billing_service or BillingService(
+            unit_of_work=self.uow,
+            payment_provider=self.payment_provider,
+        )
+
 
     @staticmethod
     def actor_uuid(user_id: int) -> UUID:
@@ -137,7 +160,7 @@ class SoftwareService:
         total = 0
         limit = max_size_bytes or settings.PACKAGE_UPLOAD_MAX_SIZE_BYTES
         suffix = Path(filename or "package.bin").suffix
-        temp = NamedTemporaryFile(delete=False, suffix=suffix) # Temporary file handling
+        temp = NamedTemporaryFile(delete=False, suffix=suffix)
         temp_path = Path(temp.name)
         try:
             with temp:
@@ -161,17 +184,38 @@ class SoftwareService:
             temp_path.unlink(missing_ok=True)
             raise
 
-    async def list_visible(self, *, user_id: int, limit: int = 100, offset: int = 0) -> list[Software]:
-        """ List packages that are visible for users."""
-        result = await self.repository.list_owned(self.actor_uuid(user_id), limit=limit, offset=offset)
-        return result
+    async def list_visible(
+        self,
+        *,
+        user_id: int,
+        is_admin: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Software]:
+        """List packages visible to a user."""
+        async with self.uow.read_only():
+             if is_admin:
+               # Admin sees all public software
+                 result, _ = await self.uow.software_repo.list_owned(
+                 owner_id=user_id,
+                 limit=limit,
+                 offset=offset,
+                )
+             else:
+                 result, _ = await self.uow.software_repo.list_owned(
+                 owner_id=self.actor_uuid(user_id),
+                 limit=limit,
+                 offset=offset,
+                )
+             return result
 
     async def get(self, software_id: UUID) -> Software:
-        """ Get software """
-        software = await self.repository.get(software_id)
-        if software is None:
-            raise SoftwareNotFoundError("Software not found")
-        return software
+        """Get software by ID."""
+        async with self.uow.read_only():
+              software = await self.uow.software_repo.get(software_id)
+              if software is None:
+                 raise SoftwareNotFoundError("Software not found.")
+              return software
 
     async def create(
         self,
@@ -181,9 +225,9 @@ class SoftwareService:
         description: str,
         visibility: str,
         price_cents: int = 0,
-        currency: str = "USD",
+        currency: str = "",
     ) -> Software:
-        """ Create a software"""
+        """Create a new software package."""
         software = Software.create(
             name=name.strip(),
             description=description.strip(),
@@ -192,9 +236,10 @@ class SoftwareService:
             price_cents=price_cents,
             currency=currency,
         )
-        self.repository.save(software)
-        await self.session.commit()
-        return software
+        async with self.uow:
+              await self.uow.software_repo.save(software)
+            
+              return software
 
     async def upload_package(
         self,
@@ -205,15 +250,14 @@ class SoftwareService:
         version_number: str,
         is_public: bool,
         price_cents: int = 0,
-        currency: str = "USD",
+        currency: str = "KSH",
         uploaded: UploadedFile,
         content_type: str | None,
     ) -> tuple[Software, Version]:
-        """ Upload a software package."""
+        """Upload a software package with initial version."""
         if uploaded.size_bytes <= 0:
             raise SoftwareDomainError("Uploaded file is empty.")
-        
-        # Create a software object
+
         software = Software.create(
             name=name.strip(),
             description=description.strip(),
@@ -223,7 +267,7 @@ class SoftwareService:
             currency=currency,
         )
 
-        version = self._build_scanned_version(
+        version = await self._build_scanned_version(
             software=software,
             version_number=version_number,
             release_notes="Initial upload",
@@ -234,9 +278,10 @@ class SoftwareService:
         if version.artifact and version.artifact.status == ArtifactStatus.ACTIVE:
             software.publish_version(version.id)
 
-        self.repository.save(software)
-        await self.session.commit()
-        return software, version
+        async with self.uow:
+            await self.uow.software_repo.save(software)
+        
+            return software, version
 
     async def upload_version(
         self,
@@ -249,10 +294,17 @@ class SoftwareService:
         content_type: str | None,
         is_admin: bool = False,
     ) -> Version:
+        """Upload a new version to existing software."""
         if uploaded.size_bytes <= 0:
             raise SoftwareDomainError("Uploaded file is empty.")
-        software = self.require_owner(software_id=software_id, user_id=user_id, is_admin=is_admin)
-        version = self._build_scanned_version(
+
+        software = await self.require_owner(
+            software_id=software_id,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+
+        version = await self._build_scanned_version(
             software=software,
             version_number=version_number,
             release_notes=release_notes.strip() or "Version upload",
@@ -262,11 +314,12 @@ class SoftwareService:
         software.add_version(version)
         if version.artifact and version.artifact.status == ArtifactStatus.ACTIVE:
             software.publish_version(version.id)
-        self.repository.save(software)
-        await self.session.commit()
-        return version
+        async with self.uow:
+            await self.uow.software_repo.save(software)
+        
+            return version
 
-    def _build_scanned_version(
+    async def _build_scanned_version(
         self,
         *,
         software: Software,
@@ -275,37 +328,55 @@ class SoftwareService:
         uploaded: UploadedFile,
         content_type: str | None,
     ) -> Version:
+        """Build version with artifact and run malware scan."""
+        try:
+            semver = SemVer.parse(version_number)
+        except ValueError as exc:
+            raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
+
         version = Version(
             id=uuid4(),
             software_id=software.id,
-            number=SemVer.parse(version_number),
+            number=semver,
             release_notes=release_notes,
             status=VersionStatus.DRAFT,
             lock_version=0,
         )
+
+        safe_filename = Path(uploaded.filename).name
+        if ".." in safe_filename or "/" in safe_filename or "\\" in safe_filename:
+            safe_filename = "artifact.bin"
+
         artifact = Artifact(
             id=uuid4(),
             version_id=version.id,
-            storage_key=f"software/{software.id}/versions/{version.id}/{uuid4()}/{uploaded.filename}",
+            storage_key=f"software/{software.id}/versions/{version.id}/{uuid4()}/{safe_filename}",
             sha256=uploaded.sha256,
             size_bytes=uploaded.size_bytes,
             mime_type=content_type or uploaded.content_type,
-            filename=uploaded.filename,
+            filename=safe_filename,
             status=ArtifactStatus.UPLOADING,
             created_at=version.created_at,
             updated_at=version.updated_at,
         )
         version.attach_artifact(artifact)
+
         malware_scan_requested(software.id, version.id, artifact.id, artifact.storage_key)
         self.storage.save_path(artifact.storage_key, uploaded.temp_path)
-        scan = self.malware_scanner.scan_file(
+
+        # Run scanner in thread pool if synchronous
+        scan = await asyncio.to_thread(
+            self.malware_scanner.scan_file,
             file_path=uploaded.temp_path,
-            filename=uploaded.filename,
+            filename=safe_filename,
             sha256=uploaded.sha256,
             content_type=content_type or uploaded.content_type,
         )
+
         if scan.is_clean:
-            artifact.process_malware_scan_success(malware_scan_success(software.id, version.id, artifact.id))
+            artifact.process_malware_scan_success(
+                malware_scan_success(software.id, version.id, artifact.id)
+            )
         else:
             artifact.process_malware_scan_failed(
                 malware_scan_failed(
@@ -315,6 +386,7 @@ class SoftwareService:
                     scan.reason or "Malware scanner rejected this artifact.",
                 )
             )
+
         return version
 
     async def update_pricing(
@@ -326,144 +398,152 @@ class SoftwareService:
         currency: str,
         is_admin: bool = False,
     ) -> Software:
-        software = self.require_owner(software_id=software_id, user_id=user_id, is_admin=is_admin)
+        """Update software pricing."""
+        software = await self.require_owner(
+            software_id=software_id,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
         software.update_pricing(price_cents=price_cents, currency=currency)
-        self.repository.save(software)
-        await self.session.commit()
-        return software
+        async with self.uow:
+              await self.uow.software_repo.save(software)
+        
+              return software
 
-    def require_owner(self, *, software_id: UUID, user_id: int, is_admin: bool = False) -> Software:
-        software = self.get(software_id)
+    async def require_owner(
+        self,
+        *,
+        software_id: UUID,
+        user_id: int,
+        is_admin: bool = False,
+    ) -> Software:
+        """Verify user owns software or is admin."""
+        async with self.uow.read_only():
+              software = await self.uow.software_repo.get(software_id)
         if not is_admin and software.owner_id != self.actor_uuid(user_id):
-            raise SoftwareAccessDeniedError("Only the owner or an admin can modify this software.")
+            raise SoftwareAccessDeniedError(
+                "Only the owner or an admin can modify this software."
+            )
         return software
 
-    async def deprecate_version(self, *, software_id: UUID, version_number: str, user_id: int, is_admin: bool) -> Version:
-        software = self.require_owner(software_id=software_id, user_id=user_id, is_admin=is_admin)
-        version = software.get_version_by_semver(SemVer.parse(version_number))
+    async def deprecate_version(
+        self,
+        *,
+        software_id: UUID,
+        version_number: str,
+        user_id: int,
+        is_admin: bool = False,
+    ) -> Version:
+        """Deprecate a software version."""
+        software = await self.require_owner(
+            software_id=software_id,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+
+        try:
+            semver = SemVer.parse(version_number)
+        except ValueError as exc:
+            raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
+
+        version = software.get_version_by_semver(semver)
         software.deprecate_version(version.id)
-        self.repository.save(software)
-        await self.session.commit()
-        return version
+        async with self.uow:
+              await self.uow.software_repo.save(software)
+              return version
 
-    async def revoke_version(self, *, software_id: UUID, version_number: str, user_id: int, is_admin: bool) -> Version:
-        software = self.require_owner(software_id=software_id, user_id=user_id, is_admin=is_admin)
-        version = software.get_version_by_semver(SemVer.parse(version_number))
+    async def revoke_version(
+        self,
+        *,
+        software_id: UUID,
+        version_number: str,
+        user_id: int,
+        is_admin: bool = False,
+    ) -> Version:
+        """Revoke a software version."""
+        software = await self.require_owner(
+            software_id=software_id,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+
+        try:
+            semver = SemVer.parse(version_number)
+        except ValueError as exc:
+            raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
+
+        version = software.get_version_by_semver(semver)
         software.revoke_version(version.id)
-        self.repository.save(software)
-        await self.session.commit()
-        return version
 
-    async def download_url(self, *, software_id: UUID, version_number: str, user_id: int) -> str:
+        async with self.uow:
+              await self.uow.software_repo.save(software)
+              return version
+
+    async def download_url( 
+        self,
+        *,
+        software_id: UUID,
+        version_number: str,
+        user_id: int,
+    ) -> str:
+        """Generate signed download URL for a version."""
         software = await self.get(software_id)
         actor = self.actor_uuid(user_id)
+
         if software.visibility == SoftwareVisibility.PRIVATE and software.owner_id != actor:
             raise SoftwareAccessDeniedError("User is not entitled to this software.")
+
         has_purchase = await self.has_purchase(software_id=software_id, user_id=user_id)
         if software.price_cents > 0 and software.owner_id != actor and not has_purchase:
-            raise SoftwareAccessDeniedError("Purchase is required before downloading this software.")
-        version = software.get_version_by_semver(SemVer.parse(version_number))
+            raise SoftwareAccessDeniedError(
+                "Purchase is required before downloading this software."
+            )
+
+        try:
+            semver = SemVer.parse(version_number)
+        except ValueError as exc:
+            raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
+
+        version = software.get_version_by_semver(semver)
         if not version.is_downloadable() or version.artifact is None:
             raise SoftwareNotFoundError("Requested version is not downloadable.")
-        # await self.repository.increment_download_count(version.id)
-        await self.session.commit()
+        async with self.uow:
+             raise NotImplementedError()
+             
+       
+
         return self.storage.create_download_url(version.artifact.storage_key)
 
     async def has_purchase(self, *, software_id: UUID, user_id: int) -> bool:
+        """Check if user has purchased software."""
         buyer_id = str(self.actor_uuid(user_id))
-        stmt = select(SoftwarePurchaseModel.id).where(
-            SoftwarePurchaseModel.software_id == str(software_id),
-            SoftwarePurchaseModel.buyer_id == buyer_id,
-        )
-        return await self.session.scalar(stmt) is not None
+        async with self.uow.read_only():
+            has_purchase = await self.uow.software_repo.has_purchase(software_id, buyer_id)
+        return has_purchase
 
     async def create_checkout(self, *, software_id: UUID, user_id: int) -> SoftwarePaymentModel:
-        software = self.get(software_id)
+        software = await self.get(software_id)
         buyer_id = self.actor_uuid(user_id)
+
         if software.owner_id == buyer_id:
             raise SoftwareDomainError("Owners already have access to their own software.")
+
         if software.visibility == SoftwareVisibility.PRIVATE:
-            raise SoftwareAccessDeniedError("This software is private and cannot be purchased.")
-        if software.price_cents <= 0: # AGENT NOTE// Is this logic true? Should we allow free software to be "purchased" for tracking purposes, or should we just not require checkout at all?
-            raise SoftwareDomainError("This software is free and does not require checkout.")
-        if self.has_purchase(software_id=software_id, user_id=user_id):
-            raise SoftwareDomainError("You already own this software.")
-        # Belongs to billing domain, but we need to check for existing pending payments to avoid creating duplicates if user retries checkout before confirming payment
-        existing = await self.session.scalar(
-            select(SoftwarePaymentModel).where(
-                SoftwarePaymentModel.software_id == str(software.id),
-                SoftwarePaymentModel.buyer_id == str(buyer_id),
-                SoftwarePaymentModel.status == "pending",
+            raise SoftwareAccessDeniedError(
+                "This software is private and cannot be purchased."
             )
-        )
-        if existing:
-            return existing
 
-        now = datetime.now(timezone.utc)
-        payment_id = str(uuid4())
-        intent = self.payment_provider.create_intent(
-            payment_id=payment_id,
-            amount_cents=software.price_cents,
-            currency=software.currency,
-            description=f"Project purchase: {software.name}",
-            buyer_id=str(buyer_id),
-            owner_id=str(software.owner_id),
-        )
-        payment = SoftwarePaymentModel(
-            id=payment_id,
-            software_id=str(software.id),
-            buyer_id=str(buyer_id),
-            owner_id=str(software.owner_id),
-            amount_cents=software.price_cents,
-            currency=software.currency,
-            status=intent.status,
-            provider=intent.provider,
-            provider_reference=intent.provider_reference,
-            created_at=now,
-            updated_at=now,
-        )
-        self.session.add(payment)
-        await self.session.commit()
-        await self.session.refresh(payment)
-        return payment
+        if software.price_cents <= 0:
+            raise SoftwareDomainError("This software is free and does not require checkout.")
 
-    async def confirm_checkout(self, *, payment_id: UUID, user_id: int) -> SoftwarePaymentModel:
-        buyer_id = str(self.actor_uuid(user_id))
-        payment = self.session.get(SoftwarePaymentModel, str(payment_id))
-        if payment is None or payment.buyer_id != buyer_id:
-            raise SoftwareNotFoundError("Payment not found.")
-        if payment.status == "completed":
-            return payment
-        if payment.status != "pending":
-            raise SoftwareDomainError("Only pending payments can be confirmed.")
+        if await self.has_purchase(software_id=software_id, user_id=user_id):
+            raise SoftwareDomainError("You already own this software.")
+        
+        
+    
+    async def confirm_checkout():
+        raise NotImplementedError()
+                       
+        
 
-        intent = self.payment_provider.confirm_intent(provider_reference=payment.provider_reference or payment.id)
-        if intent.status != "completed":
-            payment.status = intent.status
-            payment.updated_at = datetime.now(timezone.utc)
-            await self.session.commit()
-            await self.session.refresh(payment)
-            return payment
-
-        now = datetime.now(timezone.utc)
-        payment.status = "completed"
-        payment.updated_at = now
-        payment.completed_at = now
-        purchase = SoftwarePurchaseModel(
-            id=str(uuid4()),
-            software_id=payment.software_id,
-            buyer_id=payment.buyer_id,
-            owner_id=payment.owner_id,
-            payment_id=payment.id,
-            amount_cents=payment.amount_cents,
-            currency=payment.currency,
-            purchased_at=now,
-        )
-        self.session.merge(purchase)
-        await self.session.commit()
-        await self.session.refresh(payment)
-        return payment
-
-
-
-
+ 

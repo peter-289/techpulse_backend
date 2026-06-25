@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="7" time="14.392" timestamp="2026-06-23T10:18:25.728210+03:00" hostname="Hinsei"><testcase classname="tests.unit.test_upload_limits" name="test_project_file_save_stops_when_limit_is_exceeded" time="0.789" /><testcase classname="tests.unit.test_upload_limits" name="test_software_spool_file_stops_when_limit_is_exceeded" time="0.014" /><testcase classname="tests.unit.test_upload_limits" name="test_local_scanner_reads_only_sample_window" time="0.031" /><testcase classname="tests.unit.test_sms_lifecycle" name="test_sms_version_becomes_downloadable_only_after_scan_and_publish" time="0.002"><failure message="AttributeError: type object 'SoftwareStatus' has no attribute 'DRAFT'">def test_sms_version_becomes_downloadable_only_after_scan_and_publish() -&gt; None:
+&gt;       software = Software.create(
+            name="Package",
+            description="Useful package",
+            owner_id=uuid4(),
+            visibility=SoftwareVisibility.PUBLIC,
+        )
+
+tests\unit\test_sms_lifecycle.py:12: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = &lt;class 'app.modules.software_management.software.software.Software'&gt;
+name = 'Package', description = 'Useful package'
+owner_id = UUID('3ec1db10-0e36-4d61-bef5-5ce8b2660534')
+visibility = &lt;SoftwareVisibility.PUBLIC: 'public'&gt;, price_cents = 0
+currency = 'KSH'
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        name: str,
+        description: str,
+        owner_id: UUID,
+        visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC,
+        price_cents: int = 0,
+        currency: str = "KSH",
+    ) -&gt; "Software":
+        return cls(
+            id=uuid4(),
+            name=name,
+            description=description,
+            owner_id=owner_id,
+&gt;           status=SoftwareStatus.DRAFT,
+                   ^^^^^^^^^^^^^^^^^^^^
+            visibility=visibility,
+            price_cents=max(0, int(price_cents)),
+            currency=currency.upper()[:3] or "KSH",
+        )
+E       AttributeError: type object 'SoftwareStatus' has no attribute 'DRAFT'
+
+app\modules\software_management\software\software.py:52: AttributeError</failure></testcase><testcase classname="tests.unit.test_sms_lifecycle" name="test_sms_owner_controlled_pricing_is_normalized" time="0.002"><failure message="AttributeError: type object 'SoftwareStatus' has no attribute 'DRAFT'">def test_sms_owner_controlled_pricing_is_normalized() -&gt; None:
+&gt;       software = Software.create(
+            name="Paid Package",
+            description="Useful package",
+            owner_id=uuid4(),
+            visibility=SoftwareVisibility.PUBLIC,
+            price_cents=1999,
+            currency="kes",
+        )
+
+tests\unit\test_sms_lifecycle.py:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = &lt;class 'app.modules.software_management.software.software.Software'&gt;
+name = 'Paid Package', description = 'Useful package'
+owner_id = UUID('a3e0d46e-9759-4f87-bc56-f266b8ae5e81')
+visibility = &lt;SoftwareVisibility.PUBLIC: 'public'&gt;, price_cents = 1999
+currency = 'kes'
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        name: str,
+        description: str,
+        owner_id: UUID,
+        visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC,
+        price_cents: int = 0,
+        currency: str = "KSH",
+    ) -&gt; "Software":
+        return cls(
+            id=uuid4(),
+            name=name,
+            description=description,
+            owner_id=owner_id,
+&gt;           status=SoftwareStatus.DRAFT,
+                   ^^^^^^^^^^^^^^^^^^^^
+            visibility=visibility,
+            price_cents=max(0, int(price_cents)),
+            currency=currency.upper()[:3] or "KSH",
+        )
+E       AttributeError: type object 'SoftwareStatus' has no attribute 'DRAFT'
+
+app\modules\software_management\software\software.py:52: AttributeError</failure></testcase><testcase classname="tests.unit.test_sms_lifecycle" name="test_paid_download_requires_purchase" time="0.002"><failure message="AttributeError: type object 'SoftwareStatus' has no attribute 'DRAFT'">def test_paid_download_requires_purchase() -&gt; None:
+        owner_id = SoftwareService.actor_uuid(1)
+        buyer_user_id = 2
+&gt;       software = Software.create(
+            name="Paid Package",
+            description="Useful package",
+            owner_id=owner_id,
+            visibility=SoftwareVisibility.PUBLIC,
+            price_cents=1999,
+        )
+
+tests\unit\test_sms_lifecycle.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = &lt;class 'app.modules.software_management.software.software.Software'&gt;
+name = 'Paid Package', description = 'Useful package'
+owner_id = UUID('00000000-0000-0000-0000-000000000001')
+visibility = &lt;SoftwareVisibility.PUBLIC: 'public'&gt;, price_cents = 1999
+currency = 'KSH'
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        name: str,
+        description: str,
+        owner_id: UUID,
+        visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC,
+        price_cents: int = 0,
+        currency: str = "KSH",
+    ) -&gt; "Software":
+        return cls(
+            id=uuid4(),
+            name=name,
+            description=description,
+            owner_id=owner_id,
+&gt;           status=SoftwareStatus.DRAFT,
+                   ^^^^^^^^^^^^^^^^^^^^
+            visibility=visibility,
+            price_cents=max(0, int(price_cents)),
+            currency=currency.upper()[:3] or "KSH",
+        )
+E       AttributeError: type object 'SoftwareStatus' has no attribute 'DRAFT'
+
+app\modules\software_management\software\software.py:52: AttributeError</failure></testcase><testcase classname="tests.integration.test_software_management_upload_download" name="test_software_management_contract_routes_are_registered" time="0.002"><failure message="TypeError: 'FastAPI' object is not iterable">def test_software_management_contract_routes_are_registered() -&gt; None:
+&gt;       paths = {getattr(route, "path", "") for route in app}
+                                                         ^^^
+E       TypeError: 'FastAPI' object is not iterable
+
+tests\integration\test_software_management_upload_download.py:4: TypeError</failure></testcase></testsuite></testsuites>

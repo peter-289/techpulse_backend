@@ -19,6 +19,8 @@ from .software.software import _software_to_entity, _software_to_model
 from app.modules.software_management.software.exceptions import RepositoryUnavailableError, SoftwareNotFoundError, SoftwareDomainError
 from app.modules.software_management.software.value_objects import SoftwareCard, OwnedSoftwareCard  
 from app.modules.software_management.software.enums import SoftwareStatus, SoftwareVisibility
+from app.infrastructure.database.models.payment import SoftwarePaymentModel, SoftwarePurchaseModel
+
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -40,6 +42,11 @@ class ISoftwareRepository(ABC):
         """Get software by ID with all relationships loaded."""
         ...
  
+    @abstractmethod
+    async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
+        """Check if a buyer has a purchase."""
+        ...
+
     # ─── List operations ───
     @abstractmethod
     async def list_marketplace(
@@ -72,18 +79,19 @@ class ISoftwareRepository(ABC):
         """Mark as deleted."""
         ...
 
-    # ─── Search ───
     @abstractmethod
-    async def search(
+    async def search_candidates(
         self,
         query: str | None = None,
         *,
         category_id: UUID | None = None,
         tags: list[str] | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[Software], int]:
-        """Full-text + faceted search. Returns (items, total)."""
+        limit: int = 500,
+    ) -> list[Software]:
+        """
+        Fetch candidate software matching broad filters.
+        Returns unranked results — service layer applies ranking.
+        """
         ...
 
 
@@ -133,6 +141,14 @@ class SoftwareRepository(ISoftwareRepository):
            raise RepositoryUnavailableError(
             f"Failed to stage software aggregation."
            ) from exc
+    
+    async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
+        stmt = select(SoftwarePurchaseModel.id).where(
+            SoftwarePurchaseModel.software_id == str(software_id),
+            SoftwarePurchaseModel.buyer_id == str(user_id),
+        )
+        results = await self.session.scalar(stmt)
+        return results is not None
     
     async def list_marketplace(
     self,
@@ -256,24 +272,87 @@ class SoftwareRepository(ISoftwareRepository):
            except SQLAlchemyError as exc:
                logger.exception("Failed to list owned software by: %s, %s", owner_id, exc)
                raise RepositoryUnavailableError(f"Failed to software for owner: {owner_id}")
-
+     
     async def soft_delete(self, software_id: UUID, deleted_by: UUID) -> None:
-        stmt = (
-            select(
-                SoftwareModel
+          """
+          Stage soft delete. UoW commits/rolls back.
+          """
+          stmt = (
+                 update(SoftwareModel)
+                .where(
+                      SoftwareModel.id == software_id,
+                      SoftwareModel.status != SoftwareStatus.DELETED,
+                )
+                .values(
+                       status=SoftwareStatus.DELETED,
+                       deleted_at=datetime.now(timezone.utc),
+                       deleted_by=str(deleted_by),
+                )
             )
-            .where(SoftwareModel.id == software_id)
-        )
-        software = await self.session.execute(stmt)
-        if not software:
-            raise SoftwareNotFoundError(f"Software with id: {software_id} not found.")
-        
-        if software.state == SoftwareStatus.DELETED:
-            raise SoftwareDomainError("Software has already been deleted.")
+          try:
+              result = await self.session.execute(stmt)
+          except SQLAlchemyError as exc:
+              raise RepositoryUnavailableError(
+                 f"Failed to stage soft delete for {software_id}"
+                ) from exc
+    
+          if result.rowcount == 0:
+                raise SoftwareNotFoundError(
+                f"Software {software_id} not found or already deleted"
+             )
 
-        software.status = SoftwareStatus.DELETED
-        software.deleted_at = datetime.now(timezone.utc)
-        software.deleted_by = deleted_by
+    async def search_candidates(
+        self,
+        query: str | None = None,
+        *,
+        category_id: UUID | None = None,
+        tags: list[str] | None = None,
+        limit: int = 500,
+    ) -> list[Software]:
+        """
+        Concrete implementation: fetch unranked candidates.
 
-        await self.session.flush()
-        
+        Constraints applied here:
+        - `visibility` must be PUBLIC
+        - `status` must not be DELETED
+        - apply category_id and tags filters if provided
+        - search query applied using ILIKE on name and description
+        - eager load versions and artifacts
+        - hard limit of `limit` (max 500 enforced by caller)
+        """
+        try:
+            q = query.strip() if query else None
+            stmt = select(SoftwareModel).options(
+                selectinload(SoftwareModel.versions).selectinload(SoftwareVersionModel.artifact)
+            ).where(
+                SoftwareModel.visibility == SoftwareVisibility.PUBLIC,
+                SoftwareModel.status != SoftwareStatus.DELETED,
+            )
+
+            if category_id:
+                # Compare UUIDs directly; repository accepts UUID or None
+                stmt = stmt.where(SoftwareModel.category_id == category_id)
+
+            if tags:
+                # tags stored in a text column as comma-separated values (assumption)
+                for tag in tags:
+                    stmt = stmt.where(func.lower(SoftwareModel.description).ilike(f"%{tag.lower()}%"))
+
+            if q:
+                pattern = f"%{q}%"
+                stmt = stmt.where(
+                    or_(
+                        SoftwareModel.name.ilike(pattern),
+                        SoftwareModel.description.ilike(pattern),
+                    )
+                )
+
+            stmt = stmt.order_by(SoftwareModel.created_at.desc()).limit(min(limit, 500))
+
+            result = await self.session.execute(stmt)
+            models = result.scalars().all()
+            return [_software_to_entity(m) for m in models]
+
+        except SQLAlchemyError as exc:
+            logger.exception("Failed to search candidates: %s", exc)
+            raise RepositoryUnavailableError("Failed to fetch search candidates") from exc

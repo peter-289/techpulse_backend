@@ -1,11 +1,19 @@
 from datetime import datetime
+from typing import Optional, TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from .enums import SoftwareVisibility, VersionStatus, SoftwareStatus
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+
+from app.modules.shared.enums import SoftwareVisibility, VersionStatus, SoftwareStatus, AccessPolicy
+
 
 from app.infrastructure.database.db_setup import Base
 
+if TYPE_CHECKING:
+    from app.infrastructure.database.models.user import User
+    from app.infrastructure.database.models.category import CategoryModel
 
 class SoftwareModel(Base):
     __tablename__ = "sms_softwares"
@@ -16,14 +24,19 @@ class SoftwareModel(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Category uses UUID primary keys; store as native PG UUID type when available
+    category_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
+   
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[SoftwareStatus] = mapped_column(String(16), nullable=False, default=SoftwareStatus.ACTIVE)
     visibility: Mapped[SoftwareVisibility] = mapped_column(String(16), nullable=False, default=SoftwareVisibility.PRIVATE)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    access_policy: Mapped[AccessPolicy] = mapped_column(String(32), nullable=False, default=AccessPolicy.FREE)
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -35,6 +48,12 @@ class SoftwareModel(Base):
         lazy="selectin",
         order_by="SoftwareVersionModel.created_at.desc()",
     )
+
+    # Relationship to the owning user (application user)
+    owner: Mapped["User"] = relationship("User", back_populates="softwares", lazy="selectin")
+
+    # Category relationship (optional)
+    category: Mapped[Optional["CategoryModel"]] = relationship(back_populates="software", lazy="selectin")
 
 
 class SoftwareArtifactModel(Base):
