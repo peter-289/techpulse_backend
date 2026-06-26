@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from .enums import ArtifactStatus
+from app.modules.shared.enums import ArtifactStatus
 from .events import MalwareScanFailedEvent, MalwareScanSuccessEvent
 from .exceptions import ArtifactIntegrityError, InvalidStateTransitionError
 

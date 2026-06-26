@@ -79,10 +79,13 @@ class PurchaseStatus(StrEnum):
 
 
 class PaymentStatus(StrEnum):
-    PENDING = "pending"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    REFUNDED = "refunded"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    REFUNDED = "REFUNDED"
 
 
 class SoftwareStatus(StrEnum):
@@ -112,3 +115,15 @@ class AccessPolicy(StrEnum):
     FREE = "free"
     PURCHASE_REQUIRED = "purchase_required"
     OWNER_ONLY = "owner_only"
+
+
+class PaymentProvider(StrEnum):
+    MPESA = "mpesa"
+    STRIPE = "stripe"
+    PAYPAL = "paypal"
+
+class PaymentResourceType(StrEnum):
+    SOFTWARE = "software"
+    SUBSCRIPTION = "subscription"
+    LICENCE = "licence" 
+

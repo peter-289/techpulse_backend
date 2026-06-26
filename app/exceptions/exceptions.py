@@ -40,3 +40,15 @@ class ExternalServiceError(DomainError):
 class TooManyRequestsError(DomainError):
     """Exception raised when too many requests are made to an API."""
     pass
+
+class InvalidCurrencyError(DomainError):
+    """Exception raised when currency type is invalid."""
+    pass
+
+class InvalidMoneyError(DomainError):
+    """Exception raised when money values are invalid."""
+    pass
+
+class PaymentDomainError(DomainError):
+    """Exception raised when an error occors while processing a payment request."""
+    pass

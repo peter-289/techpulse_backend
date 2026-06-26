@@ -15,4 +15,6 @@ class PurchaseService:
         """Check if an active purchase exists for software and buyer."""
         async with self.uow.read_only():
             return await self.uow.purchase_repository.has_purchase(software_id, buyer_id)
-
+    
+    async def grant_purchase(self, ):
+        pass

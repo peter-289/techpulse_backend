@@ -9,7 +9,7 @@ from app.modules.security.password_manager import hash_password, verify_password
 from app.modules.security.token_manager import TokenManager
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.exceptions.exceptions import UnauthorizedError, DomainError, NotFoundError, UnauthorizedError
-from app.infrastructure.database.models.enums import UserStatus
+from app.modules.shared.enums import UserStatus
 from app.infrastructure.database.models.session import UserSession
 from app.infrastructure.email.email_service.email_worker import queue_verification_email
 from app.infrastructure.email.email_service.email_service import send_password_reset_email
@@ -20,6 +20,7 @@ from app.modules.security.abuse_protection import AbuseProtection
 
 from sqlalchemy.exc import SQLAlchemyError
 
+# Set up logging
 logger = logging.getLogger(__name__)
 
 class AuthService:

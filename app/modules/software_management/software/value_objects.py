@@ -2,9 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 import re
-from .enums import SoftwareStatus, SoftwareVisibility
 
-
+from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
 from .exceptions import InvalidSemVerError
 
 
