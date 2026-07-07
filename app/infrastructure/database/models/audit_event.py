@@ -19,7 +19,7 @@ class AuditEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
-    actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actor_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     path: Mapped[str] = mapped_column(String(255), nullable=False)
     status_code: Mapped[int] = mapped_column(nullable=False)

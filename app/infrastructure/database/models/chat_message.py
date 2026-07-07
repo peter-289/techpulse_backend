@@ -13,7 +13,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36),ForeignKey("users.id"), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
     user_message: Mapped[str] = mapped_column(Text, nullable=False)
     assistant_message: Mapped[str] = mapped_column(Text, nullable=False)

@@ -4,6 +4,8 @@
 import logging
 from fastapi.concurrency import run_in_threadpool
 from fastapi import Request
+import uuid
+from datetime import datetime, timezone
 
 from .user_schema import UserCreate
 from app.infrastructure.database.models.user import User
@@ -34,6 +36,7 @@ class UserService:
 
             # create user
             user = User(
+                id=str(uuid.uuid4()),
                 full_name=payload.full_name,
                 username=payload.username,
                 email=payload.email,
@@ -49,16 +52,18 @@ class UserService:
             return user
 
     # List users
-    async def list_users(self, cursor: int | None = None, limit: int = 100) -> list[User]:
+    async def list_users(self, limit: int = 100) -> list[User] | None:
        async with self.uow.read_only():
+            
+            cursor = datetime.now()
             users = await self.uow.user_repo.list_users(cursor=cursor, limit=limit)
             logger.debug("Fetched users page", extra={"cursor": cursor, "limit": limit})
             return users
 
     # Get user by id
-    async def get_user_by_id(self, user_id: int) -> User:
+    async def get_user_by_id(self, user_id: uuid.UUID) -> User:
         async with self.uow.read_only():
-            user = await self.uow.user_repo.get_user_by_id(user_id)
+            user = await self.uow.user_repo.get_user_by_id(str(user_id))
             if not user:
                 raise NotFoundError("User not found.")
             return user

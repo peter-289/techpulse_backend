@@ -1,12 +1,14 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
+from typing import Optional
+from uuid import UUID
 
 from .user_schema import UserCreate, UserResponse, UserRead
 from .user_service import UserService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.authentication.auth_service import AuthService
-from app.modules.shared.dependencies import require_role, get_current_user, get_db, get_abuse_protection
+from app.modules.shared.dependencies import require_role, get_current_user, get_db, get_abuse_protection, CurrentUser
 from app.modules.security.abuse_protection import AbuseProtection
 
 from app.exceptions.exceptions import DomainError
@@ -58,28 +60,27 @@ async def register_user(
 @router.get("/users/me", response_model=UserRead, status_code=200)
 async def get_my_profile(
     service: UserService = Depends(get_service),
-    current_user: dict = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
-    user_id = current_user["user_id"]
+    user_id = current_user.user_id
     user = await service.get_user_by_id(user_id=user_id)
     return user
 
 
 # List users
-@router.get("/users", response_model=list[UserRead], status_code=200)
+@router.get("/users", response_model=Optional[list[UserRead]], status_code=200)
 async def list_users(
-    cursor: int | None = Query(None, ge=1),
     limit: int = Query(100, ge=1, le=200),
     service: UserService = Depends(get_service),
     _admin: dict = Depends(require_role("ADMIN")),
 ):
-    users = await service.list_users(cursor=cursor, limit=limit)
+    users = await service.list_users(limit=limit)
     return users
 
 # Get user by id
 @router.get("/users/{user_id}", response_model=UserRead, status_code=200)
 async def get_user(
-    user_id: int,
+    user_id: UUID,
     service: UserService = Depends(get_service),
     _admin: dict = Depends(require_role("ADMIN")),
 ):

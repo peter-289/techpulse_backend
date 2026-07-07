@@ -2,11 +2,12 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
+from uuid import UUID
+from dataclasses import dataclass
 
 from app.core.config import settings
 
 from app.infrastructure.database.db_setup import SessionLocal
-from app.infrastructure.database.models.user import User
 from app.infrastructure.redis.client import redis_manager
 from app.modules.security.abuse_protection import AbuseProtection
 
@@ -29,13 +30,18 @@ credentials_exception = HTTPException(
     headers={"WWW.Authenticate": "Bearer"}
 )
 
+@dataclass(frozen=True, slots=True)
+class CurrentUser:
+      user_id: UUID
+      role: str
+
 
 # Get the current user from the token sent to them in the header or cookie
 # THIS IS A DEPENDENCY
 def get_current_user(
         request: Request,
         token: str = Depends(oauth2_scheme),
-):
+) -> CurrentUser:
     try:
         
         if not token:
@@ -44,17 +50,17 @@ def get_current_user(
             raise credentials_exception
         
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id = int(payload.get("sub"))
+        user_id = str(payload.get("sub"))
         role: str = str(payload.get("role"))
         
         if not user_id or not role:
            raise credentials_exception
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
-    return {
-        "user_id": user_id,
-        "role": role
-    }
+    return CurrentUser(
+        user_id=user_id,
+        role=role
+    )
 
 
 def get_current_user_optional(request: Request) -> dict | None:
@@ -71,7 +77,7 @@ def get_current_user_optional(request: Request) -> dict | None:
         role = payload.get("role")
         if not user_id or not role:
             return None
-        return {"user_id": int(user_id),
+        return {"user_id": user_id,
                  "role": str(role)
                  }
     except (JWTError, ValueError, TypeError):
@@ -88,7 +94,7 @@ def get_email_user(token: str):
             options={"require": ["sub", "exp","iat", "purpose", "iss" ]}
             )
         
-        user_id: int = payload["sub"]
+        user_id: str = payload["sub"]
         purpose: str = payload["purpose"]
         issuer: str = payload["iss"]
 
@@ -99,7 +105,7 @@ def get_email_user(token: str):
     except (JWTError, ValueError, TypeError):
         raise credentials_exception 
     return {
-        "user_id": int(user_id),
+        "user_id": user_id,
         "purpose": purpose
     }
 
@@ -112,7 +118,7 @@ def get_password_reset_user(token: str):
             algorithms=[settings.ALGORITHM],
             options={"require": ["sub", "exp", "iat", "jti", "purpose", "iss"]},
         )
-        user_id: int = payload["sub"]
+        user_id: str = payload["sub"]
         jti: str = payload["jti"]
         purpose: str = payload["purpose"]
         issuer: str = payload["iss"]
@@ -123,15 +129,16 @@ def get_password_reset_user(token: str):
             raise credentials_exception
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
-    return {"user_id": int(user_id), "jti": jti, "purpose": purpose, "exp": exp}
+    return {"user_id": user_id, "jti": jti, "purpose": purpose, "exp": exp}
 
 
 # RBAC
 def require_role(role: str):
     """Takes in a role and checks it against present role in User object."""
-    def role_checker(user: User = Depends(get_current_user)):
-        if user["role"] != role:
-            print(f"[Role]: {user['role']}")
+    def role_checker(user: CurrentUser = Depends(get_current_user)):
+        if user.role != role:
+            print(f"[id]: {user.user_id}")
+            print(f"[Role]: {user.role}")
             raise HTTPException(status_code=403, detail="Forbidden!")
         return user
     return role_checker

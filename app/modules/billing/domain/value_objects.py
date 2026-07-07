@@ -1,13 +1,17 @@
-from __future__ import annotations
+# from __future__ import annotations
 
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Mapping
 from uuid import UUID
 
+from pydantic import BaseModel, Field
 
-from app.modules.shared.enums import PaymentResourceType
+
 from app.exceptions.exceptions import InvalidCurrencyError, InvalidMoneyError
+from app.modules.shared.enums import PaymentResourceType, PurchaseStatus, PaymentStatus, PaymentProvider
+
 
 
 
@@ -72,5 +76,99 @@ class Money:
             raise InvalidMoneyError(
                 "Amount cannot be negative."
             )
+    
+    def __composite_values__(self):
+        return (
+            self.amount_cents,
+            self.currency,
+        )
+
+@dataclass(frozen=True, slots=True)
+class PurchaseHistoryCard:
+    purchase_id: UUID
+    software_id: UUID
+    software_name: str
+    amount: Money
+    status: PurchaseStatus
+    purchased_at: datetime
+    last_activity_at: datetime
+    refunded_at: datetime | None
+    revoked_at: datetime | None
+
+class PurchaseHistoryQuery(BaseModel):
+    limit: int = Field(50, ge=1, le=100)
+    offset: int = Field(0, ge=0)
+
+class PurchaseHistoryPage(BaseModel):
+    items: list[PurchaseHistoryCard]
+    total: int
+    limit: int
+    offset: int
+
+@dataclass(frozen=True, slots=True)
+class PaymentSummary:
+    """
+    Lightweight projection used for payment history
+    and account billing pages.
+    """
+
+    payment_id: UUID
+
+    software_id: UUID
+    software_name: str
+
+    amount: Money
+
+    provider: PaymentProvider
+    status: PaymentStatus
+
+    created_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class CheckoutSession:
+    """Read model returned to the caller after checkout initiation.
+
+    The frontend can use this object to render the payment flow and to track
+    the status of the checkout without coupling to the domain aggregate.
+    """
+
+    id: UUID
+    software_id: UUID
+    buyer_id: UUID
+    owner_id: UUID
+    amount: Money
+    provider: PaymentProvider
+    status: PaymentStatus
+    created_at: datetime
+    completed_at: datetime | None = None
+    provider_reference: str | None = None
+    client_secret: str | None = None
+    checkout_url: str | None = None
+
+    @classmethod
+    def from_payment(
+        cls,
+        *,
+        payment: object,
+        software_id: UUID,
+        owner_id: UUID,
+        provider: PaymentProvider,
+        checkout_url: str | None = None,
+        client_secret: str | None = None,
+    ) -> "CheckoutSession":
+        """Create a read model from a created payment aggregate."""
+        return cls(
+            id=payment.id,
+            software_id=software_id,
+            buyer_id=payment.buyer_id,
+            owner_id=owner_id,
+            amount=payment.amount,
+            provider=provider,
+            status=payment.status,
+            created_at=payment.created_at,
+            completed_at=payment.completed_at,
+            provider_reference=payment.provider_details.reference if payment.provider_details else None,
+            client_secret=client_secret,
+            checkout_url=checkout_url,
+        )

@@ -9,12 +9,13 @@ from app.modules.projects.project_repo import ProjectRepo
 from app.modules.resource.resource_repo import ResourceRepo
 from app.modules.security.audit import AuditRepository
 from app.modules.software_management.software_repo import SoftwareRepository
-from app.modules.billing.payment_repo import BillingRepository
 from app.modules.billing.purchase_repo import PurchaseRepository
+from app.modules.billing.payment_repo import PaymentRepository
 
 
 
 class UnitOfWork:
+
     """Unit of Work pattern implementation for managing database transactions.
     
     Provides centralized access to all repositories and manages transaction boundaries
@@ -34,8 +35,9 @@ class UnitOfWork:
         self._resource_repo = None
         self._audit_repo = None         
         self._software_repo = None
-        self._billing_repo = None
         self._purchase_repo = None
+        self._payment_repo = None
+
 
 
     @property
@@ -80,20 +82,22 @@ class UnitOfWork:
             self._software_repo = SoftwareRepository(self.session)
         return self._software_repo
 
-    @property
-    def billing_repo(self) -> BillingRepository:
-        if self._billing_repo is None:
-            self._billing_repo = BillingRepository(self.session)
-        return self._billing_repo
 
     @property
     def purchase_repository(self) -> PurchaseRepository:
         if self._purchase_repo is None:
             self._purchase_repo = PurchaseRepository(self.session)
         return self._purchase_repo
-    
+
+    @property
+    def payment_repository(self) -> "PaymentRepository":
+        if self._payment_repo is None:
+            self._payment_repo = PaymentRepository(self.session)
+        return self._payment_repo
+
     
     async def commit(self) -> None:
+
         """Commit the current transaction to the database."""
         await self.session.commit()
 

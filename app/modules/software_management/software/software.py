@@ -2,11 +2,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility, AccessPolicy, ArtifactStatus, VersionStatus
+
+from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility, AccessType
 from .events import SoftwareEvent, VersionPublishedEvent, utc_now, version_published
 from .exceptions import InvalidStateTransitionError, SoftwareNotFoundError
 from .value_objects import SemVer
 from .version import Version
+from app.modules.billing.domain.value_objects import Money
+from .exceptions import SoftwareNotFoundError
+
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -21,16 +25,13 @@ class Software:
     name: str
     description: str
     owner_id: UUID
+    price: Money
     category_id: UUID | None = None
 
     status: SoftwareStatus = SoftwareStatus.DRAFT
     visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC
-    access_policy: AccessPolicy = AccessPolicy.FREE
-
-    price_cents: int = 0
-    download_count: int = 0
-    currency: str = "KSH"
-
+    access_type: AccessType = AccessType.FREE
+    
     versions: list[Version] = field(default_factory=list)
 
     created_at: datetime = field(default_factory=utc_now)
@@ -50,9 +51,8 @@ class Software:
         owner_id: UUID,
         category_id: UUID | None = None,
         visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC,
-        access_policy: AccessPolicy = AccessPolicy.FREE,
-        price_cents: int = 0,
-        currency: str = "KSH",
+        access_policy: AccessType = AccessType.FREE,
+        price: Money,
     ) -> "Software":
         """Create a new software instance."""
         return cls(
@@ -63,30 +63,31 @@ class Software:
             category_id=category_id,
             status=SoftwareStatus.DRAFT,
             visibility=visibility,
-            access_policy=access_policy,
-            price_cents=max(0, int(price_cents)),
-            currency=currency.upper()[:3] or "KSH",
+            access_type=access_policy,
+            price=price,
         )
 
     def __post_init__(self) -> None:
         self.created_at = _ensure_utc(self.created_at)
         self.updated_at = _ensure_utc(self.updated_at)
-        self.price_cents = max(0, int(self.price_cents or 0))
-        self.currency = (self.currency or "KSH").upper()[:3]
 
     # Check if a software is modifiable.
-    def _ensure_modifiable(self)-> None:
-        """Ensure that the software is in a modifiable state."""
-        if self.status == SoftwareStatus.DELETED:
-           raise InvalidStateTransitionError("Deleted software can not be modified.")
-        
+    def _ensure_modifiable(self) -> None:
+        """Guard that blocks state-changing commands when the aggregate is not modifiable.
+
+        Queries must never call this method.
+        """
+        if self.status in {SoftwareStatus.DELETED, SoftwareStatus.ARCHIVED}:
+            raise InvalidStateTransitionError(
+                "Software must be ACTIVE to be modifiable."
+            )
+
 
     # === PRICING MANAGEMENT ===
-    def update_pricing(self, *, price_cents: int, currency: str = "KSH") -> None:
+    def update_pricing(self, *, price: Money) -> None:
         """Update the pricing of the software."""
         self._ensure_modifiable()
-        self.price_cents = max(0, int(price_cents))
-        self.currency = (currency or "KSH").upper()[:3]
+        self.price = price
         self._touch()
 
 
@@ -138,19 +139,33 @@ class Software:
         self._touch()
 
     def restore(self) -> None:
-        """Restore the software from archived or deleted state."""
-        self._ensure_modifiable()
+        """Restore the software from ARCHIVED or DELETED state.
+
+        This is a *command* that transitions the aggregate back to ACTIVE.
+        Restoration is only permitted when the software is currently ARCHIVED or DELETED.
+
+        Raises:
+            InvalidStateTransitionError: If the current state does not support restoration.
+        """
+
         if self.status == SoftwareStatus.ACTIVE:
             return
+
+        if self.status not in {SoftwareStatus.ARCHIVED, SoftwareStatus.DELETED}:
+            raise InvalidStateTransitionError(
+                "Restore is only allowed from ARCHIVED or DELETED state."
+            )
+
         self.status = SoftwareStatus.ACTIVE
         self.deleted_at = None
         self.deleted_by = None
         self._touch()
+
     
-    def change_access_policy(self, access_policy: AccessPolicy) -> None:
+    def change_access_policy(self, access_type: AccessType) -> None:
         """Change the access policy of the software."""
         self._ensure_modifiable()
-        self.access_policy = access_policy
+        self.access_type = access_type
         self._touch()
     
 
@@ -166,16 +181,31 @@ class Software:
         self._touch()
 
     def get_version(self, version_id: UUID) -> Version:
-        """Get a version by its ID."""
-        self._ensure_modifiable()
+        """Get a version by its ID.
+
+        Query-only: must be side-effect free and must not depend on the
+        aggregate being modifiable (e.g., archived/deleted software may still
+        expose versions for read use-cases).
+
+        Raises:
+            SoftwareNotFoundError: If the version does not exist.
+        """
+
         for version in self.versions:
             if version.id == version_id:
                 return version
         raise SoftwareNotFoundError(f"Version {version_id} not found.")
 
     def get_version_by_semver(self, semver: SemVer) -> Version:
-        """Get a version by its semantic version."""
-        self._ensure_modifiable()
+        """Get a version by its semantic version.
+
+        Query-only: must be side-effect free and must not depend on the
+        aggregate being modifiable.
+
+        Raises:
+            SoftwareNotFoundError: If the version does not exist.
+        """
+
         for version in self.versions:
             if version.number == semver:
                 return version
@@ -211,12 +241,60 @@ class Software:
         self._touch()
 
     def latest_downloadable(self) -> Version | None:
-        """Get the latest downloadable version of the software."""
-        self._ensure_modifiable()
+        """Get the latest downloadable version of the software.
+
+        Query-only: side-effect free; must not require the aggregate to be
+        modifiable.
+        """
         downloadable = [item for item in self.versions if item.is_downloadable()]
+
         if not downloadable:
             return None
         return max(downloadable, key=lambda item: item.published_at or item.created_at)
+
+    # === INTENTION-REVEALING QUERIES ===
+    def is_owned_by(self, actor_id: UUID) -> bool:
+        """Return whether the given actor owns this software."""
+        return self.owner_id == actor_id
+
+    def is_public(self) -> bool:
+        """Return whether the software is publicly visible."""
+        return self.visibility == SoftwareVisibility.PUBLIC
+
+    def is_active(self) -> bool:
+        """Return whether the software is in ACTIVE state."""
+        return self.status == SoftwareStatus.ACTIVE
+
+    def is_archived(self) -> bool:
+        """Return whether the software is in ARCHIVED state."""
+        return self.status == SoftwareStatus.ARCHIVED
+
+    def is_deleted(self) -> bool:
+        """Return whether the software is in DELETED state."""
+        return self.status == SoftwareStatus.DELETED
+
+    def requires_payment(self) -> bool:
+        """Return whether the access type requires payment."""
+        return self.access_type != AccessType.FREE
+
+    def has_versions(self) -> bool:
+        """Return whether the software has any versions."""
+        return len(self.versions) > 0
+
+    def has_downloadable_versions(self) -> bool:
+        """Return whether the software has any downloadable versions."""
+        return any(v.is_downloadable() for v in self.versions)
+
+    def latest_version(self) -> Version | None:
+        """Return the latest version by publication time (or creation time)."""
+        if not self.versions:
+            return None
+        return max(self.versions, key=lambda v: v.published_at or v.created_at)
+
+    def published_versions(self) -> list[Version]:
+        """Return all versions that are published."""
+        return [v for v in self.versions if v.is_published()]
+
 
 
 
@@ -226,221 +304,22 @@ class Software:
         self._events.clear()
         return events
 
+    # === Compatibility layer ===
+    # Internal code may call these query helpers; keep them side-effect free.
+    def is_publicly_visible(self) -> bool:
+        return self.is_public()
+
+
     def _touch(self) -> None:
         """Update the updated_at timestamp to the current UTC time."""
         self.updated_at = utc_now()
 
+    
 
 
-from app.modules.software_management.software_schema import SoftwareRead, SoftwareVersionRead, SoftwareCheckoutRead
-from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
-from app.modules.software_management.software.artifact import Artifact
-from .exceptions import SoftwareAccessDeniedError, SoftwareNotFoundError, SoftwareDomainError
 
 
-from fastapi import HTTPException, status
 
 
-def _actor_uuid(user_id: int) -> UUID:
-    try:
-        return UUID(int=max(0, int(user_id)))
-    except Exception:
-        # fallback for non-numeric inputs
-        return UUID(int=0)
-
-
-def _actor_int(user_id: UUID) -> int:
-    return int(user_id.int)
-
-
-def _category(description: str) -> str:
-    for line in (description or "").splitlines(keepends=True):
-        if line.lower().startswith("category:"):
-            return line.split(":", 1)[1].strip().lower() or "others"
-    return "others"
-
-
-def _software_item(software: Software, *, viewer_user_id: int) -> SoftwareRead:
-    latest = software.latest_downloadable()
-    viewer = _actor_uuid(viewer_user_id)
-    return SoftwareRead(
-        id=str(software.id),
-        name=software.name,
-        description=software.description,
-        owner_id=_actor_int(software.owner_id),
-        is_public=software.visibility.value == "public",
-        price_cents=software.price_cents,
-        currency=software.currency,
-        viewer_has_access=software.owner_id == viewer or software.price_cents == 0,
-        category=_category(software.description),
-        latest_version=str(latest.number) if latest else None,
-        download_count=sum(version.download_count for version in software.versions),
-        created_at=software.created_at.isoformat(),
-        updated_at=software.updated_at.isoformat(),
-    )
-
-
-def _version_item(version: Version) -> SoftwareVersionRead:
-    artifact = version.artifact
-    return SoftwareVersionRead(
-        id=str(version.id),
-        software_id=str(version.software_id),
-        version=str(version.number),
-        is_published=version.status.value in {"published", "deprecated"},
-        status=version.status.value,
-        download_count=version.download_count,
-        release_notes=version.release_notes,
-        created_at=version.created_at.isoformat(),
-        published_at=version.published_at.isoformat() if version.published_at else None,
-        file_hash=artifact.sha256 if artifact else None,
-        size_bytes=artifact.size_bytes if artifact else None,
-        content_type=artifact.mime_type if artifact else None,
-        file_name=artifact.filename if artifact else None,
-        artifact_status=artifact.status.value if artifact else None,
-        quarantine_reason=artifact.quarantine_reason if artifact else None,
-    )
-
-
-def _payment_item(payment) -> SoftwareCheckoutRead:
-    return SoftwareCheckoutRead(
-        id=payment.id,
-        software_id=payment.software_id,
-        buyer_id=_actor_int(UUID(payment.buyer_id)),
-        owner_id=_actor_int(UUID(payment.owner_id)),
-        amount_cents=payment.amount_cents,
-        currency=payment.currency,
-        status=payment.status,
-        provider=payment.provider,
-        provider_reference=payment.provider_reference,
-        created_at=payment.created_at.isoformat(),
-        completed_at=payment.completed_at.isoformat() if payment.completed_at else None,
-    )
-
-
-def _error(exc: SoftwareDomainError) -> HTTPException:
-    if isinstance(exc, SoftwareAccessDeniedError):
-        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, SoftwareNotFoundError):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-
-def _artifact_status(raw: str | None) -> ArtifactStatus:
-    try:
-        return ArtifactStatus((raw or ArtifactStatus.ACTIVE.value).lower())
-    except ValueError:
-        return ArtifactStatus.ACTIVE
-
-
-def _version_status(raw: str | None, is_published: bool) -> VersionStatus:
-    candidate = (raw or "").lower()
-    if candidate:
-        try:
-            return VersionStatus(candidate)
-        except ValueError:
-            pass
-    return VersionStatus.PUBLISHED if is_published else VersionStatus.DRAFT
-
-
-def _artifact_to_entity(model: SoftwareArtifactModel, version_id: str) -> Artifact:
-    return Artifact(
-        id=UUID(model.id),
-        version_id=UUID(version_id),
-        storage_key=model.storage_key,
-        sha256=model.file_hash,
-        size_bytes=model.size_bytes,
-        mime_type=model.content_type,
-        filename=model.file_name,
-        status=_artifact_status(model.status),
-        quarantine_reason=model.quarantine_reason,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-    )
-
-
-def _version_to_entity(model: SoftwareVersionModel) -> Version:
-    return Version(
-        id=UUID(model.id),
-        software_id=UUID(model.software_id),
-        number=SemVer.parse(model.version),
-        release_notes=model.release_notes,
-        status=_version_status(model.status, model.is_published),
-        lock_version=model.lock_version,
-        download_count=model.download_count,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-        published_at=model.published_at,
-        artifact=_artifact_to_entity(model.artifact, model.id) if model.artifact else None,
-    )
-
-
-def _software_to_entity(model: SoftwareModel) -> Software:
-    return Software(
-        id=UUID(model.id),
-        name=model.name,
-        description=model.description,
-        owner_id=UUID(model.owner_id),
-        status=SoftwareStatus.ACTIVE,
-        visibility=SoftwareVisibility.PUBLIC if model.is_public else SoftwareVisibility.PRIVATE,
-        category_id=UUID(model.category_id) if model.category_id else None,
-        price_cents=model.price_cents or 0,
-        currency=model.currency or "USD",
-        versions=[_version_to_entity(item) for item in model.versions],
-        created_at=model.created_at,
-        updated_at=model.updated_at,
-    )
-
-
-def _artifact_to_model(entity: Artifact) -> SoftwareArtifactModel:
-    return SoftwareArtifactModel(
-        id=str(entity.id),
-        storage_key=entity.storage_key,
-        file_hash=entity.sha256,
-        size_bytes=entity.size_bytes,
-        content_type=entity.mime_type,
-        file_name=entity.filename,
-        status=entity.status.name,
-        quarantine_reason=entity.quarantine_reason,
-        created_at=entity.created_at,
-        updated_at=entity.updated_at,
-    )
-
-
-def _version_to_model(entity: Version) -> SoftwareVersionModel:
-    model = SoftwareVersionModel(
-        id=str(entity.id),
-        software_id=str(entity.software_id),
-        version=str(entity.number),
-        release_notes=entity.release_notes,
-        is_published=entity.status in {VersionStatus.PUBLISHED, VersionStatus.DEPRECATED},
-        status=entity.status.name,
-        lock_version=entity.lock_version,
-        download_count=entity.download_count,
-        created_at=entity.created_at,
-        updated_at=entity.updated_at,
-        published_at=entity.published_at,
-    )
-    if entity.artifact is not None:
-        artifact = _artifact_to_model(entity.artifact)
-        model.artifact = artifact
-        model.artifact_id = artifact.id
-    return model
-
-
-def _software_to_model(entity: Software) -> SoftwareModel:
-    model = SoftwareModel(
-        id=str(entity.id),
-        owner_id=str(entity.owner_id),
-        name=entity.name,
-        description=entity.description,
-        is_public=entity.visibility == SoftwareVisibility.PUBLIC,
-        category_id=entity.category_id,
-        price_cents=entity.price_cents,
-        currency=entity.currency,
-        created_at=entity.created_at,
-        updated_at=entity.updated_at,
-    )
-    model.versions = [_version_to_model(version) for version in entity.versions]
-    return model
 
 

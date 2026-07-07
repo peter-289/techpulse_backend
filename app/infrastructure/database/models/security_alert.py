@@ -21,7 +21,7 @@ class SecurityAlert(Base):
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actor_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     audit_event_id: Mapped[int | None] = mapped_column(ForeignKey("audit_events.id"), nullable=True)
     acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

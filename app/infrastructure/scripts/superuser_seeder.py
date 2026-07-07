@@ -2,10 +2,11 @@ import logging
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.concurrency import run_in_threadpool
+import uuid
 
 from app.core.config import settings
 from app.modules.security.password_manager import hash_password
-from app.infrastructure.database.models.enums import GenderEnum, RoleEnum, UserStatus
+from app.modules.shared.enums import GenderEnum, RoleEnum, UserStatus
 from app.infrastructure.database.models.user import User
 from app.modules.user.user_repo import UserRepo
 
@@ -53,6 +54,7 @@ async def seed_superuser(session: AsyncSession) -> None:
 
         if user is None:
             user = User(
+                id=str(uuid.uuid4()),
                 full_name=full_name,
                 username=username,
                 email=email,

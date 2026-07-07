@@ -19,6 +19,8 @@ router = APIRouter(
     tags=["Authentication"]
 
 )
+
+# === Configure logging ===
 logger = logging.getLogger(__name__)
 
 # Get auth service

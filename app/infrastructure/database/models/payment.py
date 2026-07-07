@@ -1,10 +1,11 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, composite
 
 from app.infrastructure.database.db_setup import Base
 from app.modules.shared.enums import PurchaseStatus, PaymentStatus
+from app.modules.billing.domain.value_objects import Money
 
 
 class SoftwarePaymentModel(Base):
@@ -20,7 +21,11 @@ class SoftwarePaymentModel(Base):
     buyer_id: Mapped[str] = mapped_column(String(64), nullable=False)
     owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KSH")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+   
+    amount: Mapped[Money] = composite(
+        Money, amount_cents, currency
+    )
     status: Mapped[PaymentStatus] = mapped_column(String(20), nullable=False, default=PaymentStatus.PENDING.value)
     provider: Mapped[str] = mapped_column(String(40), nullable=False, default="manual")
     provider_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -42,8 +47,35 @@ class SoftwarePurchaseModel(Base):
     buyer_id: Mapped[str] = mapped_column(String(64), nullable=False)
     owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
     payment_id: Mapped[str] = mapped_column(ForeignKey("sms_payments.id", ondelete="CASCADE"), nullable=False)
+    
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+   
+    amount: Mapped[Money] = composite(
+        Money, amount_cents, currency
+    )
+    
     status: Mapped[PurchaseStatus] = mapped_column(String(20), nullable=False, default=PurchaseStatus.ACTIVE.value  )
     
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="KSH")
     purchased_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    
+    updated_at = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    revoked_at = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    refunded_at = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    lock_version = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )

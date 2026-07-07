@@ -9,7 +9,7 @@ from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.token_manager import TokenManager
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.db_setup import SessionLocal
-from app.infrastructure.database.models.enums import UserStatus
+from app.modules.shared.enums import UserStatus
 from app.infrastructure.email.email_service.email_service import send_verification_email
 from app.modules.shared.dependencies import get_redis
 

@@ -74,6 +74,7 @@ class KnownCategorySlug(StrEnum):
 
 class PurchaseStatus(StrEnum):
     ACTIVE = "active"
+    REVOKED = "revoked"
     REFUNDED = "refunded"
     CANCELED = "canceled"
 
@@ -111,10 +112,14 @@ class ArtifactStatus(StrEnum):
     QUARANTINED = "quarantined"
 
 
-class AccessPolicy(StrEnum):
+class AccessType(StrEnum):
     FREE = "free"
     PURCHASE_REQUIRED = "purchase_required"
     OWNER_ONLY = "owner_only"
+
+
+# Backwards-compatible alias used by older persistence layers.
+AccessPolicy = AccessType
 
 
 class PaymentProvider(StrEnum):

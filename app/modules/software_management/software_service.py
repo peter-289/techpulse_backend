@@ -6,15 +6,12 @@ import hmac
 import shutil
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import BinaryIO
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.modules.software_management.software.software import Software
@@ -28,12 +25,11 @@ from app.modules.software_management.software.exceptions import (
     SoftwareDomainError,
     SoftwareNotFoundError,
 )
-from app.infrastructure.database.models.payment import SoftwarePaymentModel, SoftwarePurchaseModel
-from app.modules.software_management.software_repo import SoftwareRepository
+from app.infrastructure.database.models.payment import SoftwarePaymentModel
 from app.infrastructure.external_apis.scanner_service.malware_scanner import MalwareScanner, get_malware_scanner
-from techpulse_backend.app.modules.billing.payment_service import PaymentProvider, get_payment_provider
+from app.modules.billing.payment_service import PaymentProvider, get_payment_provider
 from app.infrastructure.database.unit_of_work import UnitOfWork
-from techpulse_backend.app.modules.billing.billing_service import BillingService
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +121,7 @@ class SoftwareService:
         payment_provider: PaymentProvider | None = None,
         malware_scanner: MalwareScanner | None = None,
         unit_of_work: UnitOfWork | None = None,
-        billing_service: BillingService | None = None,
+        
     ):
         self.payment_provider = payment_provider or get_payment_provider()
         self.malware_scanner = malware_scanner or get_malware_scanner()
@@ -135,10 +131,7 @@ class SoftwareService:
             settings.BACKEND_URL,
         )
         self.uow = unit_of_work
-        self.billing_service = billing_service or BillingService(
-            unit_of_work=self.uow,
-            payment_provider=self.payment_provider,
-        )
+        
 
 
     @staticmethod
@@ -479,70 +472,7 @@ class SoftwareService:
               await self.uow.software_repo.save(software)
               return version
 
-    async def download_url( 
-        self,
-        *,
-        software_id: UUID,
-        version_number: str,
-        user_id: int,
-    ) -> str:
-        """Generate signed download URL for a version."""
-        software = await self.get(software_id)
-        actor = self.actor_uuid(user_id)
 
-        if software.visibility == SoftwareVisibility.PRIVATE and software.owner_id != actor:
-            raise SoftwareAccessDeniedError("User is not entitled to this software.")
-
-        has_purchase = await self.has_purchase(software_id=software_id, user_id=user_id)
-        if software.price_cents > 0 and software.owner_id != actor and not has_purchase:
-            raise SoftwareAccessDeniedError(
-                "Purchase is required before downloading this software."
-            )
-
-        try:
-            semver = SemVer.parse(version_number)
-        except ValueError as exc:
-            raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
-
-        version = software.get_version_by_semver(semver)
-        if not version.is_downloadable() or version.artifact is None:
-            raise SoftwareNotFoundError("Requested version is not downloadable.")
-        async with self.uow:
-             raise NotImplementedError()
-             
-       
-
-        return self.storage.create_download_url(version.artifact.storage_key)
-
-    async def has_purchase(self, *, software_id: UUID, user_id: int) -> bool:
-        """Check if user has purchased software."""
-        buyer_id = str(self.actor_uuid(user_id))
-        async with self.uow.read_only():
-            has_purchase = await self.uow.software_repo.has_purchase(software_id, buyer_id)
-        return has_purchase
-
-    async def create_checkout(self, *, software_id: UUID, user_id: int) -> SoftwarePaymentModel:
-        software = await self.get(software_id)
-        buyer_id = self.actor_uuid(user_id)
-
-        if software.owner_id == buyer_id:
-            raise SoftwareDomainError("Owners already have access to their own software.")
-
-        if software.visibility == SoftwareVisibility.PRIVATE:
-            raise SoftwareAccessDeniedError(
-                "This software is private and cannot be purchased."
-            )
-
-        if software.price_cents <= 0:
-            raise SoftwareDomainError("This software is free and does not require checkout.")
-
-        if await self.has_purchase(software_id=software_id, user_id=user_id):
-            raise SoftwareDomainError("You already own this software.")
-        
-        
-    
-    async def confirm_checkout():
-        raise NotImplementedError()
                        
         
 

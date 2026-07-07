@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, Uniqu
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
-from app.modules.shared.enums import SoftwareVisibility, VersionStatus, SoftwareStatus, AccessPolicy
+from app.modules.shared.enums import AccessPolicy, SoftwareVisibility, VersionStatus, SoftwareStatus
 
 
 from app.infrastructure.database.db_setup import Base

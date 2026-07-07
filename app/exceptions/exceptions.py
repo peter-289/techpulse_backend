@@ -50,5 +50,29 @@ class InvalidMoneyError(DomainError):
     pass
 
 class PaymentDomainError(DomainError):
-    """Exception raised when an error occors while processing a payment request."""
+    """Exception raised when an error occurs while processing a payment request."""
+    pass
+
+class DuplicatePaymentError(DomainError):
+    """Exception raised when payment is done twice."""
+    pass
+
+class PurchaseDomainError(DomainError):
+    """Raised when an error involving the purchase domain occurs."""
+    pass
+
+class DuplicatePurchaseError(DomainError):
+    """Exception raised when payment is done twice."""
+    pass
+
+class RepositoryUnavailableError(DomainError):
+    """Raised when a required repository is not available."""
+    pass
+
+class PurchaseNotFoundError(DomainError):
+    """Raised when a purchase could not be found."""
+    pass
+
+class OwnerCannotPurchaseError(DomainError):
+    """Raised when an owner of a product tries to purchase it."""
     pass

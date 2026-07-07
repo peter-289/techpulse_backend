@@ -32,7 +32,7 @@ class SupportChatService:
             "Please include your issue details, expected behavior, and any error message."
         )
 
-    async def ask(self, *, user_id: int, message: str) -> ChatMessage:
+    async def ask(self, *, user_id: str, message: str) -> ChatMessage:
         cleaned = (message or "").strip()
         if len(cleaned) < 2:
             raise ValidationError("Message is too short")
@@ -49,10 +49,10 @@ class SupportChatService:
             user_message=cleaned,
             assistant_message=assistant_reply,
         )
-        with self.uow:
+        async with self.uow:
             return await  self.uow.chat_message_repo.add(chat_message)
 
-    async def list_messages(self, *, user_id: int, limit: int = 25) -> list[ChatMessage]:
+    async def list_messages(self, *, user_id: str, limit: int = 25) -> list[ChatMessage]:
         async with self.uow:
             return await self.uow.chat_message_repo.list_for_user(user_id=user_id, limit=limit)
     

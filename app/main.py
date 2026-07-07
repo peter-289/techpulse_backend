@@ -24,6 +24,8 @@ from app.modules.resource.resources_router import router as resource_router
 from app.modules.user.admin_router import router as admin_router
 from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.software_management.software_router import router as software_management_router
+from app.modules.billing.purchase_router import router as purchase_router
+
 from app.core.lifespan import app_lifespan
 
 
@@ -95,6 +97,7 @@ app.include_router(resource_router)
 app.include_router(admin_router)
 app.include_router(analytics_router)
 app.include_router(software_management_router)
+app.include_router(purchase_router)
 
 # Serve frontend build in production if present
 frontend_build = Path(__file__).resolve().parents[2] / "frontend" / "build"

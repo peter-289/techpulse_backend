@@ -2,7 +2,8 @@ from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from datetime import datetime
 from typing import Optional
 
-from app.infrastructure.database.models.enums import GenderEnum, RoleEnum
+
+from app.modules.shared.enums import GenderEnum, RoleEnum
     
 
 class UserBase(BaseModel):
@@ -15,7 +16,7 @@ class UserCreate(UserBase):
     password: str
 
 class UserResponse(UserBase):
-    id: int
+    id: str
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     message: str = "Registration successfull. An email has been sent to you for account verification"
@@ -27,7 +28,7 @@ class UserResponse(UserBase):
 
 
 class UserRead(UserBase):
-    id: int
+    id: str
     created_at: Optional[datetime]
     role: RoleEnum
     
@@ -38,7 +39,8 @@ class UserRead(UserBase):
 
 
 class ProfileResponse(BaseModel):
-    user_id: int
+    user_id: str
+    # image:Optional[bytes] = None
     access_token: Optional[str] = None
     token_type: str
     role: str

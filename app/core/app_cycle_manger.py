@@ -2,7 +2,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from app.infrastructure.database.models.enums import AppState
+from app.modules.shared.enums import AppState
 
 logger = logging.getLogger(__name__)
 

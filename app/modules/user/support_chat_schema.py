@@ -14,7 +14,7 @@ class SupportChatResponse(BaseModel):
 
 class SupportChatMessageRead(BaseModel):
     id: int
-    user_id: int
+    user_id: str
     role: str
     user_message: str
     assistant_message: str

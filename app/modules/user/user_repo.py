@@ -3,6 +3,7 @@ from app.infrastructure.database.models.user import User
 from app.modules.shared.enums import UserStatus
 from app.exceptions.exceptions import ConflictError
 
+from uuid import UUID
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
@@ -32,17 +33,17 @@ class UserRepo:
             raise ConflictError("Email or username already exists!")
         return user
     
-    async def get_user_by_id(self, id: int)->Optional[User]:
+    async def get_user_by_id(self, id: UUID)->Optional[User]:
         """
         Docstring for get_user
         
         :param self: References class instance
         :param id: An integer to identify user
-        :type id: int
+        :type id: UUID
         :return: Returns a user object
         :rtype: User | None
         """
-        user = await self.db.get(User, id)
+        user = await self.db.get(User, str(id))
         return user
     
     async def get_user_by_username(self, username: str)->Optional[User]:
@@ -67,10 +68,11 @@ class UserRepo:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_users(self, cursor: int | None = None, limit: int = 100) -> list[User]:
+    async def list_users(self, cursor: datetime | None = None, limit: int = 100) -> list[User] | None:
         stmt = select(User).order_by(User.id.desc()).limit(limit)
         if cursor is not None:
-            stmt = stmt.where(User.id < cursor)
+            #raise NotImplementedError("Method not implemented.")
+            stmt = stmt.where(User.created_at < cursor)
             result = await self.db.execute(stmt)
             
             return result.scalars().all()

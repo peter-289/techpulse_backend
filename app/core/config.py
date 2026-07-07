@@ -241,7 +241,7 @@ class AppSettings(BaseSettings):
 
 
 settings = AppSettings()
-print(settings.REDIS_URL)
+
 
 # Mail management configuration
 @dataclass(frozen=True)

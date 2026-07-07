@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from .artifact import Artifact
-from .enums import ArtifactStatus, VersionStatus
+from app.modules.shared.enums import ArtifactStatus, VersionStatus
 from .exceptions import InvalidStateTransitionError, MalwareScanPendingError
 from .value_objects import SemVer
 

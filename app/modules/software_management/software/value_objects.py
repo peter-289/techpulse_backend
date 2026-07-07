@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 import re
 
-from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
+from app.modules.shared.enums import PurchaseStatus, SoftwareStatus, SoftwareVisibility
 from .exceptions import InvalidSemVerError
 
 
@@ -47,15 +47,18 @@ class OwnedSoftwareCard:
     id: UUID
     name: str
     description: str
-    
+
     visibility: SoftwareVisibility
-    status: SoftwareStatus
+    status: SoftwareStatus | None = None
 
-    latest_version: str | None
-    
-    price_cents: int | None
-    currency: str | None
+    latest_version: str | None = None
 
-    updated_at: datetime | None
-    created_at: datetime | None
-    latest_version: str | None
+    price_cents: int | None = None
+    currency: str | None = None
+
+    updated_at: datetime | None = None
+    created_at: datetime | None = None
+    purchase_id: UUID | None = None
+    software_id: UUID | None = None
+    purchase_status: PurchaseStatus | None = None
+    purchased_at: datetime | None = None

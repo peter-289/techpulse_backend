@@ -110,7 +110,7 @@ class AuthService:
             raise e
     
     # Create session and apply rate limiting
-    async def create_session(self, user_id: int, user_agent: str | None, ip_address: str | None):
+    async def create_session(self, user_id: str, user_agent: str | None, ip_address: str | None):
         """Create session and apply rate limit."""
         await self._abuse.guard_session_refresh(ip=ip_address)
         refresh_token, session = await self._create_session(user_id, user_agent, ip_address)
@@ -118,7 +118,7 @@ class AuthService:
     
 
     # Create a user session
-    async def _create_session(self, user_id: int, user_agent: str | None, ip_address: str | None):
+    async def _create_session(self, user_id: str, user_agent: str | None, ip_address: str | None):
         refresh_token = secrets.token_urlsafe(32)
         refresh_hash = self._hash_refresh_token(refresh_token)
         expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)

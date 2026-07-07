@@ -292,10 +292,10 @@ class AbuseProtection:
             3. request.client.host(fallback)
            """
            # Forwaded For
-           x_forwaded_for: Optional[str] = request.headers.get("x-forwaded-for")
-           if x_forwaded_for:
+           x_forwarded_for: Optional[str] = request.headers.get("x-forwaded-for")
+           if x_forwarded_for:
                 # Format client, proxy_1, proxy_2
-                ip = x_forwaded_for.split(",")[0].strip()
+                ip = x_forwarded_for.split(",")[0].strip()
                 if ip:
                      return ip
           # X-Real-Ip

@@ -7,7 +7,7 @@ from app.infrastructure.scripts.superuser_seeder import seed_superuser
 from app.infrastructure.database.db_setup import SessionLocal
 from app.core.app_cycle_manger import LifecycleManager
 from app.infrastructure.email.email_service.verification_recovery import run_verification_recovery_loop
-from app.infrastructure.database.models.enums import AppState
+from app.modules.shared.enums import AppState
 from .config import settings
 from app.infrastructure.redis.client import redis_manager
 

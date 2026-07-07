@@ -18,7 +18,7 @@ from app.infrastructure.database.models.software import SoftwareModel, SoftwareV
 from .software.software import _software_to_entity, _software_to_model
 from app.modules.software_management.software.exceptions import RepositoryUnavailableError, SoftwareNotFoundError, SoftwareDomainError
 from app.modules.software_management.software.value_objects import SoftwareCard, OwnedSoftwareCard  
-from app.modules.software_management.software.enums import SoftwareStatus, SoftwareVisibility
+from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
 from app.infrastructure.database.models.payment import SoftwarePaymentModel, SoftwarePurchaseModel
 
 

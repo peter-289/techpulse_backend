@@ -8,7 +8,7 @@ from app.modules.shared.dependencies import get_db
 from app.modules.shared.dependencies import get_current_user
 from app.modules.security.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.infrastructure.database.models.enums import CookieConsent
+from app.modules.shared.enums import CookieConsent
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 

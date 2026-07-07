@@ -12,7 +12,7 @@ from app.exceptions.exceptions import PaymentDomainError
 
 @dataclass(slots=True)
 class Payment:
-
+    """Domain entity representing a payment."""
     # Identity
     id: UUID
 
@@ -25,10 +25,7 @@ class Payment:
 
     # Provider
     provider: PaymentProvider
-    provider_details: PaymentProviderDetails | None = None
 
-    failure_reason: str | None = None
-    refund_reference: str | None = None
 
     # Lifecycle
     status: PaymentStatus
@@ -38,6 +35,9 @@ class Payment:
     created_at: datetime 
     updated_at: datetime
     
+    refund_reference: str | None = None
+    failure_reason: str | None = None
+    provider_details: PaymentProviderDetails | None = None
     completed_at: datetime | None = None
     refunded_at: datetime  | None = None
     canceled_at: datetime  | None = None
