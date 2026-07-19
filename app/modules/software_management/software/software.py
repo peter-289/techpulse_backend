@@ -8,8 +8,7 @@ from .events import SoftwareEvent, VersionPublishedEvent, utc_now, version_publi
 from .exceptions import InvalidStateTransitionError, SoftwareNotFoundError
 from .value_objects import SemVer
 from .version import Version
-from app.modules.billing.domain.value_objects import Money
-from .exceptions import SoftwareNotFoundError
+from app.modules.billing.domain.value_objects import Currency, Money
 
 
 
@@ -51,10 +50,18 @@ class Software:
         owner_id: UUID,
         category_id: UUID | None = None,
         visibility: SoftwareVisibility = SoftwareVisibility.PUBLIC,
-        access_policy: AccessType = AccessType.FREE,
-        price: Money,
+        price_cents: int = 0,
+        currency: str = "KES",
     ) -> "Software":
-        """Create a new software instance."""
+        """Create a new software instance.
+
+        The aggregate owns pricing invariants and constructs the Money value
+        object internally from primitive values.
+        """
+        price = Money(amount_cents=price_cents, currency=Currency(code=currency))
+        access_type = (AccessType.FREE if price.amount_cents == 0 else AccessType.PURCHASE_REQUIRED)
+
+
         return cls(
             id=uuid4(),
             name=name,
@@ -63,7 +70,7 @@ class Software:
             category_id=category_id,
             status=SoftwareStatus.DRAFT,
             visibility=visibility,
-            access_type=access_policy,
+            access_type=access_type,
             price=price,
         )
 
@@ -84,10 +91,15 @@ class Software:
 
 
     # === PRICING MANAGEMENT ===
-    def update_pricing(self, *, price: Money) -> None:
-        """Update the pricing of the software."""
+    def update_pricing(self, *, price_cents: int, currency: str) -> None:
+        """Update the pricing of the software.
+
+        The aggregate constructs the Money value object internally, preserving
+        pricing invariants. Negative price cents are normalized to zero.
+        """
         self._ensure_modifiable()
-        self.price = price
+        normalized = max(price_cents, 0)
+        self.price = Money(amount_cents=normalized, currency=Currency(code=currency))
         self._touch()
 
 

@@ -1,16 +1,24 @@
 from jose import JWTError, jwt
+
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
 from uuid import UUID
 from dataclasses import dataclass
+from pathlib import Path
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from app.core.config import settings
 
 from app.infrastructure.database.db_setup import SessionLocal
 from app.infrastructure.redis.client import redis_manager
 from app.modules.security.abuse_protection import AbuseProtection
-
+from app.infrastructure.external_apis.scanner_service.malware_scanner import get_malware_scanner, MalwareScanner
+from app.infrastructure.storage.local_storage import LocalSoftwareStorage
+from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.software_management.software_service import SoftwareService
+from app.modules.software_management.category.application.category_service import CategoryService
 
 
 
@@ -156,3 +164,45 @@ def get_redis() -> Redis | None:
 # === GET ABUSE PROTECTION ===
 def get_abuse_protection(redis_client=Depends(get_redis)) -> AbuseProtection:
     return AbuseProtection(redis_client)
+
+
+
+# === SERVICE DEPENDENCIES ===
+def get_scanner() -> MalwareScanner:
+    scanner = get_malware_scanner()
+    return scanner
+
+def get_local_storage() -> LocalSoftwareStorage:
+    storage = LocalSoftwareStorage(
+        Path(settings.UPLOAD_ROOT) / "software_management",
+        settings.SECRET_KEY,
+        settings.BACKEND_URL,
+    )
+    return storage
+
+
+
+def get_unit_of_work(session: AsyncSession = Depends(get_db)) -> UnitOfWork:
+    unit_of_work = UnitOfWork(session=session)
+    return unit_of_work
+
+
+def get_category_service(unit_of_work: UnitOfWork = Depends(get_unit_of_work)) -> CategoryService:
+    return CategoryService(unit_of_work=unit_of_work)
+
+
+def get_software_service(
+        storage: LocalSoftwareStorage = Depends(get_local_storage),
+        malware_scanner: MalwareScanner = Depends(get_scanner),
+        unit_of_work: UnitOfWork = Depends(get_unit_of_work),
+        category_service: CategoryService = Depends(get_category_service),
+) -> SoftwareService:
+    return SoftwareService(
+        storage=storage, 
+        malware_scanner=malware_scanner,
+        unit_of_work=unit_of_work,
+        category_service=category_service,
+        )
+    
+
+

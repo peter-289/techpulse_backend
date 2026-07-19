@@ -9,8 +9,9 @@ from app.modules.projects.project_repo import ProjectRepo
 from app.modules.resource.resource_repo import ResourceRepo
 from app.modules.security.audit import AuditRepository
 from app.modules.software_management.software_repo import SoftwareRepository
-from app.modules.billing.purchase_repo import PurchaseRepository
-from app.modules.billing.payment_repo import PaymentRepository
+from app.modules.software_management.category.infrastructure.category_repo import CategoryRepository
+from app.modules.billing.infrastructure.persistence.sqlalchemy_purchase_repository import PurchaseRepository
+from app.modules.billing.infrastructure.persistence.sqlalchemy_payment_repository import PaymentRepository
 
 
 
@@ -35,6 +36,7 @@ class UnitOfWork:
         self._resource_repo = None
         self._audit_repo = None         
         self._software_repo = None
+        self._category_repo = None
         self._purchase_repo = None
         self._payment_repo = None
 
@@ -81,6 +83,12 @@ class UnitOfWork:
         if self._software_repo is None:
             self._software_repo = SoftwareRepository(self.session)
         return self._software_repo
+
+    @property
+    def category_repo(self) -> CategoryRepository:
+        if self._category_repo is None:
+            self._category_repo = CategoryRepository(self.session)
+        return self._category_repo
 
 
     @property

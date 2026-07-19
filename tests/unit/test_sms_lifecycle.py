@@ -1,10 +1,10 @@
 import asyncio
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.modules.software_management.software import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
 from app.modules.software_management.software.events import malware_scan_success
-from app.modules.software_management.software.exceptions import SoftwareAccessDeniedError
+from app.modules.software_management.software.exceptions import DownloadDeniedError
 from app.modules.software_management.software_service import SoftwareService
 
 
@@ -64,18 +64,18 @@ def test_sms_owner_controlled_pricing_is_normalized() -> None:
         currency="kes",
     )
 
-    assert software.price_cents == 1999
-    assert software.currency == "KES"
+    assert software.price.amount_cents == 1999
+    assert software.price.currency.code == "KES"
 
     software.update_pricing(price_cents=-50, currency="usd")
 
-    assert software.price_cents == 0
-    assert software.currency == "USD"
+    assert software.price.amount_cents == 0
+    assert software.price.currency.code == "USD"
 
 
 def test_paid_download_requires_purchase() -> None:
-    owner_id = SoftwareService.actor_uuid(1)
-    buyer_user_id = 2
+    owner_id = UUID(int=1)
+    buyer_user_id = UUID(int=2)
     software = Software.create(
         name="Paid Package",
         description="Useful package",
@@ -123,9 +123,32 @@ def test_paid_download_requires_purchase() -> None:
 
     class Storage:
         def create_download_url(self, storage_key):
-            raise AssertionError("download URL must not be created for denied downloads")
+            return f"https://example.com/download/{storage_key}"
+
+    class _ReadOnlyCM:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+
+    class SoftwareRepo:
+        async def get(self, software_id):
+            return software
+
+        async def has_purchase(self, software_id, user_id):
+            return False
+
+        async def increment_download_count(self, version_id):
+            raise AssertionError("download count must not increment for denied downloads")
+
+    class UnitOfWork:
+        def __init__(self):
+            self.software_repo = SoftwareRepo()
+        def read_only(self):
+            return _ReadOnlyCM()
 
     service = SoftwareService.__new__(SoftwareService)
+    service._uow = UnitOfWork()
     service.repository = Repository()
     service.session = Session()
     service.storage = Storage()
@@ -137,7 +160,7 @@ def test_paid_download_requires_purchase() -> None:
                 version_number="1.0.0",
                 user_id=buyer_user_id,
             )
-        except SoftwareAccessDeniedError:
+        except DownloadDeniedError:
             return
         raise AssertionError("paid download should require a purchase")
 

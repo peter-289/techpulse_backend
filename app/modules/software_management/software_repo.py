@@ -15,11 +15,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.modules.software_management.software.software import Software
 from app.infrastructure.database.models.software import SoftwareModel, SoftwareVersionModel
-from .software.software import _software_to_entity, _software_to_model
-from app.modules.software_management.software.exceptions import RepositoryUnavailableError, SoftwareNotFoundError, SoftwareDomainError
+from app.modules.shared.mappers import _software_to_entity, _software_to_model
+from app.modules.software_management.software.exceptions import RepositoryUnavailableError, SoftwareNotFoundError
 from app.modules.software_management.software.value_objects import SoftwareCard, OwnedSoftwareCard  
 from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
-from app.infrastructure.database.models.payment import SoftwarePaymentModel, SoftwarePurchaseModel
+from app.infrastructure.database.models.payment import SoftwarePurchaseModel
 
 
 # Logger setup
@@ -356,3 +356,6 @@ class SoftwareRepository(ISoftwareRepository):
         except SQLAlchemyError as exc:
             logger.exception("Failed to search candidates: %s", exc)
             raise RepositoryUnavailableError("Failed to fetch search candidates") from exc
+        
+
+    

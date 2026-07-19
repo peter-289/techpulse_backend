@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 import re
+from pathlib import Path
 
 from app.modules.shared.enums import PurchaseStatus, SoftwareStatus, SoftwareVisibility
 from .exceptions import InvalidSemVerError
@@ -62,3 +63,14 @@ class OwnedSoftwareCard:
     software_id: UUID | None = None
     purchase_status: PurchaseStatus | None = None
     purchased_at: datetime | None = None
+
+
+
+@dataclass(frozen=True, slots=True)
+class UploadedFile:
+    """Upload file data shape."""
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    temp_path: Path

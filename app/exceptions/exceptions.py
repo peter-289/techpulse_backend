@@ -41,6 +41,10 @@ class TooManyRequestsError(DomainError):
     """Exception raised when too many requests are made to an API."""
     pass
 
+
+
+
+
 class InvalidCurrencyError(DomainError):
     """Exception raised when currency type is invalid."""
     pass
@@ -76,3 +80,46 @@ class PurchaseNotFoundError(DomainError):
 class OwnerCannotPurchaseError(DomainError):
     """Raised when an owner of a product tries to purchase it."""
     pass
+
+
+class PaymentProviderGatewayError(Exception):
+    """Base exception for provider gateway errors."""
+
+
+class PaymentGatewayUnavailableError(PaymentProviderGatewayError):
+    """Raised when the provider cannot be reached or is unavailable."""
+
+
+class PaymentProviderTimeoutError(PaymentGatewayUnavailableError):
+    """Raised when a provider request times out."""
+
+
+class PaymentProviderAuthenticationError(PaymentGatewayUnavailableError):
+    """Raised when authentication with a provider fails."""
+
+
+class InvalidWebhookSignatureError(PaymentProviderGatewayError):
+    """Raised when a webhook signature fails verification."""
+
+
+class PaymentProviderRequestError(PaymentProviderGatewayError):
+    """Raised when a provider request fails for a non-timeout reason."""
+
+
+class RefundFailedError(PaymentProviderGatewayError):
+    """Raised when issuing a refund fails."""
+
+class PaymentGatewayRegistryError(Exception):
+    """Base exception for payment gateway registry configuration and lookup errors."""
+
+
+class InvalidGatewayConfigurationError(PaymentGatewayRegistryError):
+    """Raised when the gateway registry is constructed with invalid configuration."""
+
+
+class DuplicateGatewayRegistrationError(PaymentGatewayRegistryError):
+    """Raised when the same payment provider is registered more than once."""
+
+
+class UnsupportedPaymentProviderError(PaymentGatewayRegistryError):
+    """Raised when attempting to resolve an unsupported payment provider."""

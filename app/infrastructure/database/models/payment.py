@@ -5,7 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column, composite
 
 from app.infrastructure.database.db_setup import Base
 from app.modules.shared.enums import PurchaseStatus, PaymentStatus
-from app.modules.billing.domain.value_objects import Money
+from app.modules.billing.domain.value_objects import Money, Currency
 
 
 class SoftwarePaymentModel(Base):
@@ -14,6 +14,7 @@ class SoftwarePaymentModel(Base):
         Index("ix_sms_payments_buyer_id", "buyer_id"),
         Index("ix_sms_payments_software_id", "software_id"),
         Index("ix_sms_payments_status", "status"),
+        Index("ix_sms_payments_provider_reference", "provider_reference"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
