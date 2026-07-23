@@ -2,7 +2,6 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
-from fastapi import Depends
 
 from app.core.config import settings
 from app.modules.security.abuse_protection import AbuseProtection
@@ -16,10 +15,11 @@ from app.modules.shared.dependencies import get_redis
 
 logger = logging.getLogger(__name__)
 
-def get_token_manager(abuse_protection: AbuseProtection = Depends(get_redis)) -> TokenManager:
-    return TokenManager(abuse_protection=abuse_protection)
+def get_token_manager() -> TokenManager:
+    return TokenManager(abuse_protection=AbuseProtection(get_redis()))
 
-token_manager = Depends(get_token_manager)
+
+token_manager = get_token_manager()
 
 
 def compute_recovery_delay_seconds(
@@ -118,10 +118,10 @@ async def process_unverified_users_once() -> None:
                 email=candidate["email"],
                 name=candidate["full_name"],
             )
-            mark_verification_email_sent(user_id=candidate["id"])
+            await mark_verification_email_sent(user_id=candidate["id"])
         except Exception as exc:
             retry_count = candidate["retry_count"] + 1
-            mark_verification_email_failed(
+            await mark_verification_email_failed(
                 user_id=candidate["id"],
                 error_message=str(exc),
                 override_retry_count=retry_count,

@@ -58,7 +58,7 @@ class TokenManager:
           return token
 
     # Create password reset token
-    def create_password_reset_token(user_id: int) -> str:
+    def create_password_reset_token(self, user_id: int) -> str:
         """Creates a password reset token."""
         now = datetime.now(timezone.utc)
         expire = now + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
@@ -74,7 +74,7 @@ class TokenManager:
 
 
     # Consume password reset token to prevent replay attacks
-    async def consume_password_reset_token(token: str, exp: int | float | datetime) -> bool:
+    async def consume_password_reset_token(self, token: str, exp: int | float | datetime) -> bool:
               """Marks a reset token as used so it cannot be replayed."""
               if isinstance(exp, datetime):
                      expiry_ts = int(exp.timestamp())
@@ -85,10 +85,10 @@ class TokenManager:
               now_ts = int(datetime.now(timezone.utc).timestamp())
               ttl_seconds = max(1, expiry_ts - now_ts)
               token_fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()
-              return AbuseProtection.acquire_once(
-                     scope="password_reset_token",
-                     identifier=token_fingerprint,
-                     ttl_seconds=ttl_seconds,
+              return await self._abuse.acquire_once(
+                      scope="password_reset_token",
+                      identifier=token_fingerprint,
+                      ttl_seconds=ttl_seconds,
         )
 
 

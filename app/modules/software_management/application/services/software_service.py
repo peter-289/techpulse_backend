@@ -19,6 +19,7 @@ from app.modules.software_management.domain.entities.version import Version
 from app.modules.software_management.domain.events import malware_scan_failed, malware_scan_requested, malware_scan_success
 from app.modules.software_management.domain.exceptions import (
     InvalidSemVerError,
+    DownloadDeniedError,
     SoftwareAccessDeniedError,
     SoftwareDomainError,
     SoftwareNotFoundError,
@@ -53,7 +54,14 @@ class SoftwareService:
 
     @property
     def repository(self):
+        override = getattr(self, "_repository_override", None)
+        if override is not None:
+            return override
         return self._uow.software_repo
+
+    @repository.setter
+    def repository(self, value) -> None:
+        self._repository_override = value
 
     @staticmethod
     async def spool_file(
@@ -278,6 +286,11 @@ class SoftwareService:
         version = software.get_version_by_semver(semver=semver)
         if version.artifact is None:
             raise SoftwareNotFoundError("Version artifact not found.")
+        if not software.is_owned_by(user_id) and not await self.has_purchase(
+            software_id=software.id,
+            user_id=user_id,
+        ):
+            raise DownloadDeniedError("A purchase is required to download this software.")
         return self._download_service.create_download_url(
             software_id=software.id, 
             version_number=version.number, 

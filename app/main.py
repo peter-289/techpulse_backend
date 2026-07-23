@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 
+from app.core.config import settings
 from app.exceptions.handlers import register_exception_handlers
 from app.modules.security.audit_middleware import AuditMiddleware
 
@@ -30,8 +31,13 @@ from app.modules.billing.api.payment_router import router as payment_router
 from app.core.lifespan import app_lifespan
 
 
+class IterableFastAPI(FastAPI):
+    def __iter__(self):
+        return iter(self.routes)
+
+
 # Initialize app
-app = FastAPI(
+app = IterableFastAPI(
     title="TechPulse Backend",
     description="This is a backend service for Tech pulse web application.",
     version="1.0.0",
@@ -55,11 +61,10 @@ def _normalize_origins(raw_origins: str) -> list[str]:
     return normalized
 
 # Origins
-# origins = _normalize_origins(settings.FRONTEND_URL)
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-]
+origins = _normalize_origins(settings.FRONTEND_URL)
+for fallback_origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+    if fallback_origin not in origins:
+        origins.append(fallback_origin)
 
 # Middlewares
 app.add_middleware(

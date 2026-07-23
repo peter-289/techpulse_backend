@@ -195,7 +195,7 @@ class AppSettings(BaseSettings):
 
         # Database URLs
         self.DATABASE_URL = _normalize_database_url(self.DATABASE_URL)
-        self.ALEMBIC_DATABASE_URL = _normalize_database_url(self.ALEMBIC_DATABASE_URL)
+       
 
         # Log management
         self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").upper()

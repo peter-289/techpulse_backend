@@ -15,10 +15,12 @@ from app.modules.shared.dependencies import (
     get_storage,
     require_role,
 )
+from app.modules.billing.infrastructure.container import get_checkout_service
 from app.modules.software_management.domain.exceptions import SoftwareDomainError
 from app.modules.shared.enums import SoftwareVisibility
 from app.modules.software_management.schema.software_schema import (
     SoftwareRead,
+    SoftwarePricingUpdate,
     SoftwareSummary,
     SoftwareUploadResponse,
     SoftwareVersionRead,
@@ -28,10 +30,18 @@ from app.modules.shared.mappers import _software_item, _version_item, _error
 from app.modules.software_management.application.services.software_service import SoftwareService
 from app.modules.software_management.application.services.download_service import DownloadService
 from app.modules.software_management.application.services.search_service import SearchService
+from app.modules.billing.api.schemas.payment_schema import CheckoutSessionRead
+from app.modules.billing.application.services.checkout_service import CheckoutService
+from app.modules.shared.enums import PaymentProvider
 from app.infrastructure.storage.local_storage import DownloadUrlSigner, Storage, StorageFileNotFoundError, StorageSecurityError, StorageUnavailableError
 
 router = APIRouter(prefix="/api/v1/software-management", tags=["software-management"])
 
+
+def get_software_checkout_service() -> CheckoutService:
+    from app.modules.billing.infrastructure.container import get_checkout_service
+
+    return get_checkout_service()
 
 
 # List softwares for a user
@@ -138,6 +148,72 @@ async def upload_version(
     finally:
         uploaded.temp_path.unlink(missing_ok=True)
     return _version_item(created_version)
+
+
+@router.post("/{software_id}/checkout", response_model=CheckoutSessionRead, status_code=status.HTTP_201_CREATED)
+async def checkout_software(
+    software_id: UUID,
+    provider: PaymentProvider = Query(default=PaymentProvider.STRIPE),
+    checkout_service: CheckoutService = Depends(get_software_checkout_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CheckoutSessionRead:
+    try:
+        return await checkout_service.create_checkout(
+            software_id=software_id,
+            buyer_id=current_user.user_id,
+            provider=provider,
+        )
+    except SoftwareDomainError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/payments/{payment_id}/confirm", status_code=status.HTTP_200_OK)
+async def confirm_payment(
+    payment_id: UUID,
+    checkout_service: CheckoutService = Depends(get_software_checkout_service),
+) -> dict[str, str]:
+    await checkout_service.complete_checkout(payment_id=payment_id)
+    return {"status": "confirmed"}
+
+
+@router.patch("/{software_id}/pricing", response_model=SoftwareRead)
+async def update_pricing(
+    software_id: UUID,
+    payload: SoftwarePricingUpdate,
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SoftwareRead:
+    try:
+        software = await service.update_pricing(
+            software_id=software_id,
+            user_id=current_user.user_id,
+            price_cents=payload.price_cents,
+            currency=payload.currency,
+            is_admin=str(current_user.role).upper() == "ADMIN",
+        )
+    except SoftwareDomainError as exc:
+        raise _error(exc) from exc
+    return _software_item(software, viewer_user_id=current_user.user_id)
+
+
+@router.patch("/{software_id}/pricing", response_model=SoftwareRead)
+async def update_pricing(
+    software_id: UUID,
+    payload: SoftwarePricingUpdate,
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SoftwareRead:
+    try:
+        software = await service.update_pricing(
+            software_id=software_id,
+            user_id=current_user.user_id,
+            price_cents=payload.price_cents,
+            currency=payload.currency,
+            is_admin=str(current_user.role).upper() == "ADMIN",
+        )
+    except SoftwareDomainError as exc:
+        raise _error(exc) from exc
+    return _software_item(software, viewer_user_id=current_user.user_id)
 
 # Deprecate a software version
 @router.post("/{software_id}/versions/{version}/deprecate", status_code=status.HTTP_202_ACCEPTED)

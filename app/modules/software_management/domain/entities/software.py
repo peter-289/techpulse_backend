@@ -231,7 +231,7 @@ class Software:
         """
 
         for version in self.versions:
-            if version.number == semver:
+            if version.number == semver or str(version.number) == str(semver):
                 return version
         raise SoftwareNotFoundError(f"Version {semver} not found.")
 
@@ -352,7 +352,6 @@ class Software:
     def _touch(self) -> None:
         """Update the updated_at timestamp to the current UTC time."""
         self.updated_at = utc_now()
-
 
 
 
