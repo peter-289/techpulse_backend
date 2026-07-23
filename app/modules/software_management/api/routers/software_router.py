@@ -278,6 +278,7 @@ async def internal_storage_download(
         storage_key=storage_key,
         expires=expires,
         token=token,
+        method="GET",
         )
     file_handle = await download_service.read_file(storage_key=storage_key)
     

@@ -1,5 +1,6 @@
 from pathlib import Path
 from urllib.parse import urlparse
+from sqlalchemy.engine import make_url
 
 from dataclasses import dataclass
 from pydantic import model_validator
@@ -50,15 +51,15 @@ class AppSettings(BaseSettings):
         extra="ignore",
     )
 
+    
     # Core
     DATABASE_URL: str = ""
-    ALEMBIC_DATABASE_URL: str = ""
     SECRET_KEY: str = ""
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 1800
-
+    
     # Logging/Audit
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "logs"
