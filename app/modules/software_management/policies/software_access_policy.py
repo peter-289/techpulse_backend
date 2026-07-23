@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.modules.shared.enums import VersionStatus
-from app.modules.software_management.software.exceptions import (
+from app.modules.software_management.domain.exceptions import (
     DownloadDeniedError,
     DuplicatePurchaseError,
     OwnerCannotPurchaseError,
@@ -13,8 +13,8 @@ from app.modules.software_management.software.exceptions import (
     SoftwareNotPublishedError,
     VersionUnavailableError,
 )
-from app.modules.software_management.software.software import Software
-from app.modules.software_management.software.version import Version
+from app.modules.software_management.domain.entities.software import Software
+from app.modules.software_management.domain.entities.version import Version
 
 
 class SoftwareAccessPolicy:

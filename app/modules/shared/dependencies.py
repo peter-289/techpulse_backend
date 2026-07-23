@@ -5,7 +5,6 @@ from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
 from uuid import UUID
 from dataclasses import dataclass
-from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -13,12 +12,14 @@ from app.core.config import settings
 
 from app.infrastructure.database.db_setup import SessionLocal
 from app.infrastructure.redis.client import redis_manager
+from .container import storage, signer
 from app.modules.security.abuse_protection import AbuseProtection
 from app.infrastructure.external_apis.scanner_service.malware_scanner import get_malware_scanner, MalwareScanner
-from app.infrastructure.storage.local_storage import LocalSoftwareStorage
+from app.infrastructure.storage.local_storage import DownloadUrlSigner, Storage
 from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.modules.software_management.software_service import SoftwareService
-from app.modules.software_management.category.application.category_service import CategoryService
+from app.modules.software_management.application.services.software_service import SoftwareService
+from app.modules.software_management.application.services.download_service import DownloadService
+from app.modules.software_management.application.services.category_service import CategoryService
 
 
 
@@ -172,37 +173,51 @@ def get_scanner() -> MalwareScanner:
     scanner = get_malware_scanner()
     return scanner
 
-def get_local_storage() -> LocalSoftwareStorage:
-    storage = LocalSoftwareStorage(
-        Path(settings.UPLOAD_ROOT) / "software_management",
-        settings.SECRET_KEY,
-        settings.BACKEND_URL,
-    )
-    return storage
-
-
-
+# === GET UNIT OF WORK ===
 def get_unit_of_work(session: AsyncSession = Depends(get_db)) -> UnitOfWork:
     unit_of_work = UnitOfWork(session=session)
     return unit_of_work
 
-
+# === GET CATEGORY SERVICE ===
 def get_category_service(unit_of_work: UnitOfWork = Depends(get_unit_of_work)) -> CategoryService:
     return CategoryService(unit_of_work=unit_of_work)
 
 
+
+
+
+# === GET LOCAL STORAGE ===
+def get_storage() -> Storage:
+    return storage
+
+# === GET HMAC SIGNER ===
+def get_signer() -> DownloadUrlSigner:
+    return signer
+
+# === GET SOFTWARE SERVICE ===
+def get_download_service(
+        signer: DownloadUrlSigner = Depends(get_signer),
+        unit_of_work: UnitOfWork = Depends(get_unit_of_work),
+        storage: Storage = Depends(get_storage),
+) -> DownloadService:
+    return DownloadService(uow=unit_of_work, url_signer=signer, storage=storage)
+
+# === GET SOFTWARE SERVICE ===
 def get_software_service(
-        storage: LocalSoftwareStorage = Depends(get_local_storage),
+        download_service: DownloadService = Depends(get_download_service),
+        storage: Storage = Depends(get_storage),
         malware_scanner: MalwareScanner = Depends(get_scanner),
         unit_of_work: UnitOfWork = Depends(get_unit_of_work),
         category_service: CategoryService = Depends(get_category_service),
 ) -> SoftwareService:
     return SoftwareService(
+        download_service=download_service,
         storage=storage, 
         malware_scanner=malware_scanner,
         unit_of_work=unit_of_work,
         category_service=category_service,
         )
-    
+
+
 
 

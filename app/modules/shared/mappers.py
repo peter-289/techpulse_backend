@@ -3,15 +3,15 @@ from __future__ import annotations
 from uuid import UUID
 from fastapi import HTTPException, status
 
-from app.modules.software_management.software.software import Software
-from app.modules.software_management.software_schema import SoftwareCheckoutRead, SoftwareRead, SoftwareVersionRead
+from app.modules.software_management.domain.entities.artifact import Artifact
+from app.modules.software_management.domain.entities.software import Software
+from app.modules.software_management.domain.entities.version import Version
+from app.modules.software_management.schema.software_schema import SoftwareCheckoutRead, SoftwareRead, SoftwareVersionRead
 from app.modules.shared.enums import ArtifactStatus, VersionStatus, SoftwareStatus, SoftwareVisibility
 from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
 
-from app.modules.software_management.software.artifact import Artifact
-from app.modules.software_management.software.version import Version
-from app.modules.software_management.software.exceptions import SoftwareDomainError, SoftwareAccessDeniedError, SoftwareNotFoundError
-from app.modules.software_management.software.value_objects import SemVer
+from app.modules.software_management.domain.exceptions import SoftwareDomainError, SoftwareAccessDeniedError, SoftwareNotFoundError
+from app.modules.software_management.domain.value_objects import SemVer
 from app.modules.billing.domain.value_objects import Currency, Money
 
 
@@ -50,30 +50,30 @@ def _software_item(software: Software, *, viewer_user_id: UUID) -> SoftwareRead:
         viewer_has_access=software.owner_id == viewer_user_id or software.price.amount_cents == 0,
         category=_category(software.description),
         latest_version=str(latest.number) if latest else None,
-        #download_count=sum(version.download_count for version in software.versions),
+        download_count=software.download_count,
         created_at=software.created_at.isoformat(),
         updated_at=software.updated_at.isoformat(),
     )
 
 
 def _version_item(version: Version) -> SoftwareVersionRead:
+    """Version read model"""
     artifact = version.artifact
     return SoftwareVersionRead(
-        id=str(version.id),
-        software_id=str(version.software_id),
-        version=str(version.number),
-        is_published=version.status.value in {"published", "deprecated"},
-        status=version.status.value,
+        id=version.id,
+        software_id=version.software_id,
+        artifact_id=artifact.id if artifact else None,
+        version=version.number,
+        status=version.status,
         download_count=version.download_count,
         release_notes=version.release_notes,
-        created_at=version.created_at.isoformat(),
-        published_at=version.published_at.isoformat() if version.published_at else None,
+        created_at=version.created_at,
+        published_at=version.published_at,
         file_hash=artifact.sha256 if artifact else None,
         size_bytes=artifact.size_bytes if artifact else None,
         content_type=artifact.mime_type if artifact else None,
         file_name=artifact.filename if artifact else None,
         artifact_status=artifact.status.value if artifact else None,
-        quarantine_reason=artifact.quarantine_reason if artifact else None,
     )
 
 
@@ -136,14 +136,14 @@ def _artifact_status(raw: str | None) -> ArtifactStatus:
         return ArtifactStatus.ACTIVE
 
 
-def _version_status(raw: str | None, is_published: bool) -> VersionStatus:
+def _version_status(raw: str | None) -> VersionStatus:
     candidate = (raw or "").lower()
     if candidate:
         try:
             return VersionStatus(candidate)
         except ValueError:
             pass
-    return VersionStatus.PUBLISHED if is_published else VersionStatus.DRAFT
+    return VersionStatus.PUBLISHED if candidate == VersionStatus.PUBLISHED.value.lower() else VersionStatus.DRAFT
 
 
 def _artifact_to_entity(model: SoftwareArtifactModel, version_id: str) -> Artifact:
@@ -168,7 +168,7 @@ def _version_to_entity(model: SoftwareVersionModel) -> Version:
         software_id=UUID(model.software_id),
         number=SemVer.parse(model.version),
         release_notes=model.release_notes,
-        status=_version_status(model.status, model.is_published),
+        status=_version_status(model.status),
         lock_version=model.lock_version,
         download_count=model.download_count,
         created_at=model.created_at,
@@ -179,18 +179,25 @@ def _version_to_entity(model: SoftwareVersionModel) -> Version:
 
 
 def _software_to_entity(model: SoftwareModel) -> Software:
+    status_value = getattr(model, "status", SoftwareStatus.ACTIVE)
+    visibility_value = getattr(model, "visibility", SoftwareVisibility.PUBLIC)
+    status_raw = status_value.value if isinstance(status_value, SoftwareStatus) else str(status_value).lower()
+    visibility_raw = (
+        visibility_value.value if isinstance(visibility_value, SoftwareVisibility) else str(visibility_value).lower()
+    )
     return Software(
         id=UUID(model.id),
         name=model.name,
         description=model.description,
         owner_id=UUID(model.owner_id),
-        status=SoftwareStatus.ACTIVE,
-        visibility=SoftwareVisibility.PUBLIC if model.is_public else SoftwareVisibility.PRIVATE,
-        category_id=UUID(model.category_id) if model.category_id else None,
+        status=SoftwareStatus(status_raw),
+        visibility=SoftwareVisibility(visibility_raw),
+        category_id=model.category_id if getattr(model, "category_id", None) else None,
         price=Money(amount_cents=model.price_cents or 0, currency=Currency(code=model.currency or "USD")),
         versions=[_version_to_entity(item) for item in model.versions],
         created_at=model.created_at,
         updated_at=model.updated_at,
+        download_count=model.download_count or 0,
     )
 
 
@@ -215,7 +222,6 @@ def _version_to_model(entity: Version) -> SoftwareVersionModel:
         software_id=str(entity.software_id),
         version=str(entity.number),
         release_notes=entity.release_notes,
-        is_published=entity.status in {VersionStatus.PUBLISHED, VersionStatus.DEPRECATED},
         status=entity.status.name,
         lock_version=entity.lock_version,
         download_count=entity.download_count,
@@ -236,13 +242,14 @@ def _software_to_model(entity: Software) -> SoftwareModel:
         owner_id=str(entity.owner_id),
         name=entity.name,
         description=entity.description,
-        visibility=entity.visibility == SoftwareVisibility.PUBLIC,
+        visibility=entity.visibility.value,
         category_id=entity.category_id,
         price_cents=entity.price.amount_cents,
         currency=entity.price.currency.code,
         access_policy=entity.access_type,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
+        download_count=entity.download_count,
     )
     model.versions = [_version_to_model(version) for version in entity.versions]
     return model

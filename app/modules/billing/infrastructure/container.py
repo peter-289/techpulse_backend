@@ -31,7 +31,7 @@ from app.modules.shared.enums import PaymentProvider
 from app.modules.software_management.policies.software_access_policy import (
     SoftwareAccessPolicy,
 )
-from app.modules.software_management.software_service import SoftwareService
+from app.modules.software_management.application.services.software_service import SoftwareService
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def get_purchase_service(uow: object = Depends(get_unit_of_work)) -> PurchaseSer
 
 
 def get_software_service(uow: object = Depends(get_unit_of_work)) -> "object":
-    from app.modules.software_management.software_service import SoftwareService
+    from app.modules.software_management.application.services.software_service import SoftwareService
 
     return SoftwareService(unit_of_work=uow)
 

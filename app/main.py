@@ -12,7 +12,6 @@ from pathlib import Path
 
 
 from app.exceptions.handlers import register_exception_handlers
-from app.core.config import settings
 from app.modules.security.audit_middleware import AuditMiddleware
 
 
@@ -23,8 +22,8 @@ from app.modules.projects.projects_router import router as project_router
 from app.modules.resource.resources_router import router as resource_router
 from app.modules.user.admin_router import router as admin_router
 from app.modules.analytics.analytics_router import router as analytics_router
-from app.modules.software_management.software_router import router as software_management_router
-from app.modules.software_management.category.api.category_router import router as category_router
+from app.modules.software_management.api.routers.software_router import router as software_management_router
+from app.modules.software_management.api.routers.category_router import router as category_router
 from app.modules.billing.api.purchase_router import router as purchase_router
 from app.modules.billing.api.payment_router import router as payment_router
 

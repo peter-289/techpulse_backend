@@ -5,7 +5,7 @@ from uuid import UUID
 
 from app.modules.billing.domain.purchase import Purchase
 from app.modules.billing.domain.value_objects import PurchaseHistoryCard
-from app.modules.software_management.software.value_objects import OwnedSoftwareCard
+from app.modules.software_management.domain.value_objects.value_objects import OwnedSoftwareCard
 
 
 @runtime_checkable

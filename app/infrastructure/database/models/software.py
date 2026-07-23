@@ -39,6 +39,7 @@ class SoftwareModel(Base):
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
@@ -100,7 +101,7 @@ class SoftwareVersionModel(Base):
     release_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     visibility: Mapped[SoftwareVisibility] = mapped_column(String(16), nullable=False, default=SoftwareVisibility.PRIVATE)
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status: Mapped[VersionStatus] = mapped_column(String(16), nullable=False, default=VersionStatus.DRAFT)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=VersionStatus.DRAFT)
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

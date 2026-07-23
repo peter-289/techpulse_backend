@@ -51,9 +51,9 @@ class AppSettings(BaseSettings):
     )
 
     # Core
-    DATABASE_URL: str = "postgresql+asyncpg://hinsei:MwakiPeter_289@localhost:5432/techpulse_db"
-    ALEMBIC_DATABASE_URL: str = "postgresql+psycopg2://hinsei:MwakiPeter_289@localhost:5432/techpulse_db"
-    SECRET_KEY: str = "shdshhsahjhjfuhedjssjakk##$@##2334#322@32!@3#hdggdgdusd&*/???////??!1!340987g3s9"
+    DATABASE_URL: str = ""
+    ALEMBIC_DATABASE_URL: str = ""
+    SECRET_KEY: str = ""
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
@@ -111,6 +111,8 @@ class AppSettings(BaseSettings):
     PACKAGE_UPLOAD_RATE_WINDOW_SECONDS: int = 60
     PACKAGE_DOWNLOAD_RATE_LIMIT: int = 120
     PACKAGE_DOWNLOAD_RATE_WINDOW_SECONDS: int = 60
+    STORAGE_DOWNLOAD_PATH: str = ""
+    URL_EXPIRY_MAX_SECONDS: int = 900
 
     # Payments
     PAYMENT_PROVIDER: str = "manual"
@@ -241,35 +243,6 @@ class AppSettings(BaseSettings):
 
 
 settings = AppSettings()
-
-
-# Mail management configuration
-@dataclass(frozen=True)
-class MailConfig:
-    MAIL_USERNAME: str
-    MAIL_PASSWORD: str
-    MAIL_FROM: str
-    MAIL_PORT: int
-    MAIL_SERVER: str
-    MAIL_STARTTLS: bool
-    MAIL_SSL_TLS: bool
-    USE_CREDENTIALS: bool
-    VALIDATE_CERTS: bool
-
-
-# Mail configuration
-mail_config = MailConfig(
-    MAIL_USERNAME=settings.SMTP_USERNAME,
-    MAIL_PASSWORD=settings.SMTP_PASSWORD,
-    MAIL_FROM=settings.EMAIL_FROM,
-    MAIL_PORT=settings.SMTP_PORT,
-    MAIL_SERVER=settings.SMTP_HOST,
-    MAIL_STARTTLS=settings.SMTP_USE_TLS,
-    MAIL_SSL_TLS=settings.SMTP_USE_SSL,
-    USE_CREDENTIALS=bool(settings.SMTP_USERNAME and settings.SMTP_PASSWORD),
-    VALIDATE_CERTS=settings.SMTP_VALIDATE_CERTS,
-)
-
 
 def _assert_min_secret(name: str, value: str, min_len: int = 32) -> None:
     if not value or len(value.strip()) < min_len:

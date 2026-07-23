@@ -2,10 +2,10 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from app.modules.software_management.software import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
-from app.modules.software_management.software.events import malware_scan_success
-from app.modules.software_management.software.exceptions import DownloadDeniedError
-from app.modules.software_management.software_service import SoftwareService
+from app.modules.software_management.domain.entities import Artifact, ArtifactStatus, SemVer, Software, SoftwareVisibility, Version, VersionStatus
+from app.modules.software_management.domain.events.events import malware_scan_success
+from app.modules.software_management.domain.exceptions import DownloadDeniedError
+from app.modules.software_management.application.services.software_service import SoftwareService
 
 
 def test_sms_version_becomes_downloadable_only_after_scan_and_publish() -> None:

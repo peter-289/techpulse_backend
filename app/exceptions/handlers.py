@@ -40,7 +40,7 @@ from app.modules.billing.domain.exceptions import (
     InvalidProviderReference,
     WebhookProcessingError,
 )
-from app.modules.software_management.software.exceptions import (
+from app.modules.software_management.domain.exceptions import (
     SoftwareDomainError,
     SoftwareNotFoundError,
     SoftwareAccessDeniedError,
@@ -57,14 +57,20 @@ from app.modules.software_management.software.exceptions import (
     MalwareScanPendingError,
     SoftwareValidationError,
     RepositoryUnavailableError as SoftwareRepositoryUnavailableError,
+        CategoryDomainError,
+        CategoryNotFoundError,
+        DuplicateCategoryError,
+        CategoryInUseError,
+        CategoryDeletedError,
+        CategoryRepositoryUnavailableError,
 )
-from app.modules.software_management.category.domain.exceptions import (
-    CategoryDomainError,
-    CategoryNotFoundError,
-    DuplicateCategoryError,
-    CategoryInUseError,
-    CategoryDeletedError,
-    CategoryRepositoryUnavailableError,
+from app.infrastructure.storage.local_storage import (
+    StorageError,
+    StorageUnavailableError,
+    StorageWriteError,
+    StorageReadError,
+    StorageFileNotFoundError,
+    StorageSecurityError,
 )
 
 logger = logging.getLogger(__name__)
@@ -286,6 +292,30 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(CategoryRepositoryUnavailableError)
     async def _category_repository_unavailable_handler(_request: Request, exc: CategoryRepositoryUnavailableError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageFileNotFoundError)
+    async def _storage_file_not_found_handler(_request: Request, exc: StorageFileNotFoundError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageSecurityError)
+    async def _storage_security_handler(_request: Request, exc: StorageSecurityError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageReadError)
+    async def _storage_read_error_handler(_request: Request, exc: StorageReadError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageUnavailableError)
+    async def _storage_unavailable_handler(_request: Request, exc: StorageUnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageWriteError)
+    async def _storage_write_error_handler(_request: Request, exc: StorageWriteError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageError)
+    async def _storage_error_handler(_request: Request, exc: StorageError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

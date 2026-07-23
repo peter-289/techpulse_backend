@@ -28,7 +28,7 @@ from app.modules.billing.domain.value_objects import (
 from app.modules.billing.domain.repositories.payment_repository import (
     PaymentRepositoryProtocol,
 )
-from app.modules.software_management.software.exceptions import RepositoryUnavailableError
+from app.modules.software_management.domain.exceptions import RepositoryUnavailableError
 
 logger = logging.getLogger(__name__)
 

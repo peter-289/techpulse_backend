@@ -24,7 +24,7 @@ from app.modules.billing.domain.repositories.purchase_repository import (
     PurchaseRepositoryProtocol,
 )
 from app.modules.shared.enums import PurchaseStatus, SoftwareVisibility, VersionStatus
-from app.modules.software_management.software.value_objects import OwnedSoftwareCard
+from app.modules.software_management.domain.value_objects.value_objects import OwnedSoftwareCard
 
 logger = logging.getLogger(__name__)
 

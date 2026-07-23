@@ -42,7 +42,7 @@ class AuditService:
         """
         Persist an audit event and evaluate alert rules.
         """
-
+        path = path[:500]
         try:
             async with self.uow:
                 event = AuditEvent(

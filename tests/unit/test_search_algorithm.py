@@ -4,9 +4,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.modules.software_management.search_algorithm import SearchAlgorithm
-from app.modules.software_management.software.software import Software
-from app.modules.software_management.software.enums import SoftwareVisibility
+from app.modules.software_management.application.services.search_algorithm import SearchAlgorithm
+from app.modules.software_management.domain.entities.software import Software
+from app.modules.shared.enums import SoftwareVisibility
 
 
 def make_software(name: str, description: str = "", download_count: int = 0, versions: int = 0, created_at: datetime | None = None):

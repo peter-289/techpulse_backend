@@ -8,8 +8,8 @@ from app.modules.user.support_chat_repo import ChatMessageRepo
 from app.modules.projects.project_repo import ProjectRepo
 from app.modules.resource.resource_repo import ResourceRepo
 from app.modules.security.audit import AuditRepository
-from app.modules.software_management.software_repo import SoftwareRepository
-from app.modules.software_management.category.infrastructure.category_repo import CategoryRepository
+from app.modules.software_management.infrastructure.persistence.repositories.sqlalchemy_software_repository import SQLAlchemySoftwareRepository
+from app.modules.software_management.infrastructure.persistence.repositories.category_repo import CategoryRepository
 from app.modules.billing.infrastructure.persistence.sqlalchemy_purchase_repository import PurchaseRepository
 from app.modules.billing.infrastructure.persistence.sqlalchemy_payment_repository import PaymentRepository
 
@@ -79,9 +79,9 @@ class UnitOfWork:
         return self._audit_repo
         
     @property
-    def software_repo(self) -> SoftwareRepository:
+    def software_repo(self) -> SQLAlchemySoftwareRepository:
         if self._software_repo is None:
-            self._software_repo = SoftwareRepository(self.session)
+            self._software_repo = SQLAlchemySoftwareRepository(self.session)
         return self._software_repo
 
     @property

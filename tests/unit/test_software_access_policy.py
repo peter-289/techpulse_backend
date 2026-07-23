@@ -16,7 +16,7 @@ from app.modules.software_management.software.exceptions import (
     VersionUnavailableError,
 )
 from app.modules.software_management.software.software import Software
-from app.modules.software_management.software.value_objects import SemVer
+from techpulse_backend.app.modules.software_management.domain.value_objects.value_objects import SemVer
 from app.modules.software_management.software.version import Version
 
 

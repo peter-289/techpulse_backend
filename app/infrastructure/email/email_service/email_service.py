@@ -5,7 +5,8 @@ from pathlib import Path
 import aiosmtplib
 from jinja2 import Environment, FileSystemLoader
 
-from app.core.config import mail_config, settings
+from app.core.config import settings
+from app.modules.shared.container import mail_config
 
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"

@@ -86,7 +86,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                              event_type=event_type,
                              actor_user_id=actor_user_id,
                              method=request.method,
-                             path=request.url.path,
+                             path=request.url.path[:255],
                              status_code=status_code,
                              ip_address=ip_address,
                              user_agent=user_agent,
