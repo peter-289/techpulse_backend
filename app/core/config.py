@@ -78,18 +78,21 @@ class AppSettings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str | None = None
     REDIS_DB: int = 0
+    REDIS_USERNAME: str | None = None
+    
 
     @property
     def REDIS_URL(self) -> str:
+        auth = ""
 
-        if self.REDIS_PASSWORD:
-            return (
-                f"redis://:{self.REDIS_PASSWORD}"
-                f"@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-            )
+        if self.REDIS_USERNAME and self.REDIS_PASSWORD:
+            auth = f"{self.REDIS_USERNAME}:{self.REDIS_PASSWORD}@"
+        elif self.REDIS_PASSWORD:
+            auth = f":{self.REDIS_PASSWORD}@"
 
         return (
-            f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+            f"redis://{auth}"
+            f"{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         )
 
 
