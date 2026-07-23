@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, Asyn
 
 
 from app.core.config import settings
-if not settings.DATABASE_URL_ASYNC or settings.DATABASE_URL_SYNC:
+if not settings.DATABASE_URL_ASYNC:
     raise RuntimeError("DATABASE_URL is not set.")
 
 engine_kwargs = {"pool_pre_ping": True}
