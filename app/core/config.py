@@ -53,7 +53,8 @@ class AppSettings(BaseSettings):
 
     
     # Core
-    DATABASE_URL: str = ""
+    DATABASE_URL_ASYNC: str = ""
+    DATABASE_URL_SYNC: str = ""
     SECRET_KEY: str = ""
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
@@ -194,8 +195,8 @@ class AppSettings(BaseSettings):
     def normalize_and_validate(self) -> "AppSettings":
 
         # Database URLs
-        self.DATABASE_URL = _normalize_database_url(self.DATABASE_URL)
-       
+        self.DATABASE_URL_ASYNC= _normalize_database_url(self.DATABASE_URL_ASYNC)
+        self.DATABASE_URL_SYNC = _normalize_database_url(self.DATABASE_URL_SYNC)
 
         # Log management
         self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").upper()

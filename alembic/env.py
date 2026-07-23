@@ -6,7 +6,7 @@ from sqlalchemy import pool
 
 from alembic import context
 from app.core.config import settings, AppSettings
-from app.infrastructure.database.db_setup import Base, sync_url
+from app.infrastructure.database.db_setup import Base
 import app.infrastructure.database.models
 
 
@@ -38,12 +38,12 @@ target_metadata = Base.metadata
 
 # Get connection args based on DATABASE 
 def get_connect_args() -> dict:
-    print("SYNC URL:", sync_url)
-    print("TYPE:", type(sync_url))
-    db_url = sync_url or ""
-    if db_url.startswith("sqlite"):
+   
+    print("TYPE:", type(settings.DATABASE_URL_SYNC))
+    
+    if settings.DATABASE_URL_SYNC.startswith("sqlite"):
         return {"timeout": 15}
-    elif db_url.startswith("postgresql") or db_url.startswith("postgres"):
+    elif settings.DATABASE_URL_SYNC.startswith("postgresql") or settings.DATABASE_URL_SYNC.startswith("postgres"):
         return {"connect_timeout": 15}
     return {}
 
@@ -60,11 +60,10 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    print("SYNC URL:", sync_url)
-    print("TYPE:", type(sync_url))
-    url = sync_url or config.get_main_option("sqlalchemy.url")
+    print("TYPE:", type(settings.DATABASE_URL_SYNC))
+    
     context.configure(
-        url=url,
+        url=settings.DATABASE_URL_SYNC,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -82,8 +81,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    if sync_url:
-        config.set_main_option("sqlalchemy.url", sync_url)
+    if settings.DATABASE_URL_SYNC:
+        config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC)
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
