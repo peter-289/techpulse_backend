@@ -38,6 +38,8 @@ target_metadata = Base.metadata
 
 # Get connection args based on DATABASE 
 def get_connect_args() -> dict:
+    print("SYNC URL:", sync_url)
+    print("TYPE:", type(sync_url))
     db_url = sync_url or ""
     if db_url.startswith("sqlite"):
         return {"timeout": 15}
@@ -58,6 +60,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
+    print("SYNC URL:", sync_url)
+    print("TYPE:", type(sync_url))
     url = sync_url or config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
