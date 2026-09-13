@@ -7,7 +7,10 @@ from uuid import UUID
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.exceptions.exceptions import ExternalServiceError
 from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.infrastructure.storage.local_storage import Storage, StorageFileNotFoundError, StorageSecurityError, StorageUnavailableError
+from app.modules.software_management.domain.entities.artifact import Artifact
 from app.modules.software_management.domain.exceptions import (
     ArtifactNotFoundError,
     RepositoryUnavailableError,
@@ -18,8 +21,6 @@ from app.modules.software_management.domain.exceptions import (
 )
 from app.modules.software_management.domain.ports.download_signer import DownloadSigner, SignedDownloadUrl
 from app.modules.software_management.domain.value_objects import SemVer
-from app.infrastructure.storage.local_storage import Storage, StorageFileNotFoundError, StorageSecurityError, StorageUnavailableError
-from app.exceptions.exceptions import ExternalServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,8 @@ class DownloadService:
         version_number: str | SemVer,
         user_id: UUID,
     ) -> SignedDownloadUrl:
-        try:
-            async with self._uow.read_only():
-                software = await self._uow.software_repo.get(software_id)
-        except SQLAlchemyError as exc:
-            raise RepositoryUnavailableError("Failed to load software for download URL generation.") from exc
+        async with self._uow.read_only():
+            software = await self._uow.software_repo.get(software_id)
 
         if software is None:
             raise SoftwareNotFoundError(f"Software {software_id} not found.")
@@ -56,44 +54,47 @@ class DownloadService:
 
         if not version.is_downloadable():
             raise VersionNotDownloadableError(f"Version {semver} is not downloadable.")
-
-        if version.artifact is None:
-            raise ArtifactNotFoundError(f"Version {semver} has no artifact.")
-
-        has_purchase = await self._uow.software_repo.has_purchase(
-            software_id=software_id,
-            user_id=user_id,
-        )
-        if not (software.is_public() or software.is_owned_by(user_id) or has_purchase):
+        if len(version.artifacts) != 1:
+            raise ArtifactNotFoundError("Version download requires exactly one artifact.")
+        has_purchase = False
+        if hasattr(self._uow.software_repo, "has_purchase"):
+            has_purchase = await self._uow.software_repo.has_purchase(software_id=software_id, user_id=user_id)
+        if not software.is_public() and not software.is_owned_by(user_id) and not has_purchase:
             raise SoftwareAccessDeniedError("You are not authorized to download this software.")
 
-        url = self._url_signer.create_url(storage_key=version.artifact.storage_key, method="GET")
-        
+        artifact = version.artifacts[0]
+        url = self._url_signer.create_url(storage_key=artifact.storage_key, method="GET")
         await self.record_download(software_id=software_id, version_id=version.id)
-        logger.info(
-            "download_url_generated software=%s version=%s user=%s",
-            software_id,
-            semver,
-            user_id,
-        )
+        logger.info("download_url_generated software=%s version=%s user=%s", software_id, semver, user_id)
+        return url
+
+    async def create_artifact_download_url(
+        self,
+        *,
+        artifact: Artifact,
+        user_id: UUID | None = None,
+    ) -> SignedDownloadUrl:
+        url = self._url_signer.create_url(storage_key=artifact.storage_key, method="GET")
+        logger.info("artifact_download_url_generated artifact=%s user=%s", artifact.id, user_id)
         return url
 
     async def verify_token(
-            self, 
-            *, 
-            storage_key: str,
-            expires: int,
-            token: str,
-            method: str,) -> bool:
-        """Calls verify_token() from any implementation of DownloadUrlSigner Protocol."""
+        self,
+        *,
+        storage_key: str,
+        expires: int,
+        token: str,
+        method: str,
+    ) -> bool:
         if not self._url_signer.verify_token(
             storage_key=storage_key,
             expires=expires,
             token=token,
             method=method,
-            ):
+        ):
             raise SoftwareAccessDeniedError("Invalid or expired download token")
-        
+        return True
+
     async def record_download(self, *, software_id: UUID, version_id: UUID | None = None) -> None:
         try:
             async with self._uow:
@@ -118,7 +119,6 @@ class DownloadService:
         logger.info("download_recorded software=%s version=%s", software_id, version_id)
 
     async def read_file(self, *, storage_key: str) -> BinaryIO:
-        """Calls open() for any implementation of Storage() protocol."""
         try:
             file_handle = await run_in_threadpool(self._storage.open, storage_key=storage_key)
         except StorageFileNotFoundError as exc:

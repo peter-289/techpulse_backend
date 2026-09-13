@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
 from app.modules.software_management.domain.exceptions import InvalidSemVerError
+from app.exceptions.exceptions import InvalidCurrencyError, InvalidMoneyError
 
 
 _SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
@@ -66,10 +67,50 @@ class OwnedSoftwareCard:
 
 
 @dataclass(frozen=True, slots=True)
-class UploadedFile:
-    """Upload file data shape."""
+class ArtifactUpload:
+    """Spool-side upload data for a single artifact."""
     filename: str
-    content_type: str
+    content_type: str | None
     size_bytes: int
     sha256: str
     temp_path: Path
+
+
+# Backwards-compatible alias used by existing application code.
+UploadedFile = ArtifactUpload
+
+
+
+@dataclass(frozen=True, slots=True)
+class Currency:
+    """Immutable ISO 4217 currency code value object."""
+
+    code: str
+    _SUPPORTED: frozenset[str] = frozenset({"USD", "KES", "EUR"})
+
+    def __post_init__(self) -> None:
+        code = self.code.strip().upper()
+        if len(code) != 3 or not code.isalpha():
+            raise InvalidCurrencyError("Currency code must contain exactly three alphabetic characters.")
+        if code not in self._SUPPORTED:
+            raise InvalidCurrencyError(f"Unsupported currency '{code}'.")
+        object.__setattr__(self, "code", code)
+
+    def __str__(self) -> str:
+        return self.code
+
+    def __repr__(self) -> str:
+        return f"Currency('{self.code}')"
+
+
+@dataclass(frozen=True, slots=True)
+class Money:
+    amount_cents: int
+    currency: Currency
+
+    def __post_init__(self) -> None:
+        if self.amount_cents < 0:
+            raise InvalidMoneyError("Amount cannot be negative.")
+
+    def __composite_values__(self):
+        return (self.amount_cents, self.currency)

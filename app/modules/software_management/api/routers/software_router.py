@@ -1,8 +1,8 @@
 from pathlib import Path
 from uuid import UUID
 
-from fastapi.concurrency import run_in_threadpool
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 
 from app.modules.shared.dependencies import (
@@ -10,38 +10,29 @@ from app.modules.shared.dependencies import (
     get_category_service,
     get_current_user,
     get_download_service,
-    get_signer,
     get_software_service,
-    get_storage,
     require_role,
+    get_abuse_protection,
 )
-from app.modules.billing.infrastructure.container import get_checkout_service
+
 from app.modules.software_management.domain.exceptions import SoftwareDomainError
 from app.modules.shared.enums import SoftwareVisibility
 from app.modules.software_management.schema.software_schema import (
+    ArtifactResponse,
     SoftwareRead,
     SoftwarePricingUpdate,
     SoftwareSummary,
     SoftwareUploadResponse,
     SoftwareVersionRead,
 )
-from app.modules.software_management.domain.value_objects import OwnedSoftwareCard 
+from app.modules.software_management.domain.value_objects import OwnedSoftwareCard, SemVer
 from app.modules.shared.mappers import _software_item, _version_item, _error
 from app.modules.software_management.application.services.software_service import SoftwareService
 from app.modules.software_management.application.services.download_service import DownloadService
 from app.modules.software_management.application.services.search_service import SearchService
-from app.modules.billing.api.schemas.payment_schema import CheckoutSessionRead
-from app.modules.billing.application.services.checkout_service import CheckoutService
-from app.modules.shared.enums import PaymentProvider
-from app.infrastructure.storage.local_storage import DownloadUrlSigner, Storage, StorageFileNotFoundError, StorageSecurityError, StorageUnavailableError
+from app.modules.security.abuse_protection import AbuseProtection
 
 router = APIRouter(prefix="/api/v1/software-management", tags=["software-management"])
-
-
-def get_software_checkout_service() -> CheckoutService:
-    from app.modules.billing.infrastructure.container import get_checkout_service
-
-    return get_checkout_service()
 
 
 # List softwares for a user
@@ -51,6 +42,7 @@ async def list_software(
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> tuple[list[OwnedSoftwareCard], int]:
+   # print("CURRENT USER:", current_user)
     user_id = current_user.user_id
     items, _ = await service.list_visible(user_id=user_id, limit=limit)
      
@@ -67,12 +59,14 @@ async def upload_software_package(
     visibility: SoftwareVisibility = Form(SoftwareVisibility.PUBLIC),
     price_cents: int = Form(0),
     currency: str = Form("KES"),
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> SoftwareUploadResponse:
-    
-    uploaded = await service.spool_file(file.file, file.filename or "package.bin")
+    uploads = [
+        await service.spool_file(file.file, file.filename or "package.bin", file.content_type)
+        for file in files
+    ]
     try:
         software, created_version = await service.upload_package(
             user_id=current_user.user_id,
@@ -83,22 +77,29 @@ async def upload_software_package(
             visibility=SoftwareVisibility(visibility),
             price_cents=price_cents,
             currency=currency,
-            uploaded=uploaded,
-            content_type=file.content_type,
+            artifacts=uploads,
         )
     except SoftwareDomainError as exc:
         raise _error(exc) from exc
     finally:
-        uploaded.temp_path.unlink(missing_ok=True)
+        for uploaded in uploads:
+            uploaded.temp_path.unlink(missing_ok=True)
 
-    artifact = created_version.artifact
     return SoftwareUploadResponse(
-        id=str(software.id),
         software_id=str(software.id),
         version_id=str(created_version.id),
         version=str(created_version.number),
-        size_bytes=artifact.size_bytes if artifact else uploaded.size_bytes,
-        sha256=artifact.sha256 if artifact else uploaded.sha256,
+        artifacts=[
+            ArtifactResponse(
+                id=artifact.id,
+                filename=artifact.filename,
+                size_bytes=artifact.size_bytes,
+                sha256=artifact.sha256,
+                content_type=artifact.mime_type,
+                status=artifact.status.value,
+            )
+            for artifact in created_version.artifacts
+        ],
     )
 
 
@@ -128,54 +129,31 @@ async def upload_version(
     software_id: UUID,
     version: str = Form(...),
     release_notes: str = Form(""),
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> SoftwareVersionRead:
-    uploaded = await service.spool_file(file.file, file.filename or "package.bin")
+    uploads = [
+        await service.spool_file(file.file, file.filename or "package.bin", file.content_type)
+        for file in files
+    ]
     try:
         created_version = await service.upload_version(
             software_id=software_id,
             user_id=current_user.user_id,
             version_number=version,
             release_notes=release_notes,
-            uploaded=uploaded,
-            content_type=file.content_type,
+            artifacts=uploads,
             is_admin=str(current_user.role).upper() == "ADMIN",
         )
     except SoftwareDomainError as exc:
         raise _error(exc) from exc
     finally:
-        uploaded.temp_path.unlink(missing_ok=True)
+        for uploaded in uploads:
+            uploaded.temp_path.unlink(missing_ok=True)
     return _version_item(created_version)
 
 
-@router.post("/{software_id}/checkout", response_model=CheckoutSessionRead, status_code=status.HTTP_201_CREATED)
-async def checkout_software(
-    software_id: UUID,
-    provider: PaymentProvider = Query(default=PaymentProvider.STRIPE),
-    checkout_service: CheckoutService = Depends(get_software_checkout_service),
-    current_user: CurrentUser = Depends(get_current_user),
-) -> CheckoutSessionRead:
-    try:
-        return await checkout_service.create_checkout(
-            software_id=software_id,
-            buyer_id=current_user.user_id,
-            provider=provider,
-        )
-    except SoftwareDomainError as exc:
-        raise _error(exc) from exc
-
-
-@router.post("/payments/{payment_id}/confirm", status_code=status.HTTP_200_OK)
-async def confirm_payment(
-    payment_id: UUID,
-    checkout_service: CheckoutService = Depends(get_software_checkout_service),
-) -> dict[str, str]:
-    await checkout_service.complete_checkout(payment_id=payment_id)
-    return {"status": "confirmed"}
-
-
 @router.patch("/{software_id}/pricing", response_model=SoftwareRead)
 async def update_pricing(
     software_id: UUID,
@@ -196,24 +174,6 @@ async def update_pricing(
     return _software_item(software, viewer_user_id=current_user.user_id)
 
 
-@router.patch("/{software_id}/pricing", response_model=SoftwareRead)
-async def update_pricing(
-    software_id: UUID,
-    payload: SoftwarePricingUpdate,
-    service: SoftwareService = Depends(get_software_service),
-    current_user: CurrentUser = Depends(get_current_user),
-) -> SoftwareRead:
-    try:
-        software = await service.update_pricing(
-            software_id=software_id,
-            user_id=current_user.user_id,
-            price_cents=payload.price_cents,
-            currency=payload.currency,
-            is_admin=str(current_user.role).upper() == "ADMIN",
-        )
-    except SoftwareDomainError as exc:
-        raise _error(exc) from exc
-    return _software_item(software, viewer_user_id=current_user.user_id)
 
 # Deprecate a software version
 @router.post("/{software_id}/versions/{version}/deprecate", status_code=status.HTTP_202_ACCEPTED)
@@ -254,14 +214,78 @@ async def revoke_version(
     return {"status": "revoked", "version": version}
 
 
+@router.get("/{software_id}/versions/{version}/artifacts", response_model=list[ArtifactResponse])
+async def list_version_artifacts(
+    software_id: UUID,
+    version: str,
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[ArtifactResponse]:
+    try:
+        software = await service.get(software_id)
+        target_version = software.get_version_by_semver(SemVer.parse(version))
+    except SoftwareDomainError as exc:
+        raise _error(exc) from exc
+
+    if not software.is_public() and not software.is_owned_by(current_user.user_id) and not await service.has_purchase(
+        software_id=software_id,
+        user_id=current_user.user_id,
+    ):
+        raise _error(SoftwareDomainError("A purchase is required to view artifacts."))
+
+    return [
+        ArtifactResponse(
+            id=artifact.id,
+            filename=artifact.filename,
+            size_bytes=artifact.size_bytes,
+            sha256=artifact.sha256,
+            content_type=artifact.mime_type,
+            status=artifact.status.value,
+        )
+        for artifact in target_version.artifacts
+    ]
+
+
+@router.get("/{software_id}/versions/{version}/artifacts/{artifact_id}/download")
+async def download_artifact(
+    software_id: UUID,
+    version: str,
+    artifact_id: UUID,
+    request: Request,
+    abuse_protection: AbuseProtection = Depends(get_abuse_protection),
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> RedirectResponse:
+    try:
+        # Get client ip
+        ip = abuse_protection.get_client_ip(request=request)
+        
+        abuse_protection.guard_download(ip=ip)
+        url = await service.download_artifact_url(
+            software_id=software_id,
+            version_number=version,
+            artifact_id=artifact_id,
+            user_id=current_user.user_id,
+        )
+    except SoftwareDomainError as exc:
+        raise _error(exc) from exc
+    return RedirectResponse(url=url.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
 @router.get("/{software_id}/versions/{version}/download")
 async def download_version(
     software_id: UUID,
     version: str,
+    request: Request,
+    abuse_protection: AbuseProtection = Depends(get_abuse_protection),
     service: DownloadService = Depends(get_download_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> RedirectResponse:
     try:
+        # Get client ip
+        ip = abuse_protection.get_client_ip(request=request)
+
+        abuse_protection.guard_download(ip=ip)
         url = await service.create_download_url(
             software_id=software_id,
             version_number=version,
@@ -331,9 +355,9 @@ async def admin_packages(
 @router.get("/admin/summary", response_model=SoftwareSummary)
 async def admin_summary(
     service: SoftwareService = Depends(get_software_service),
-    admin: CurrentUser = Depends(require_role("ADMIN")),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> SoftwareSummary:
-    items, _ = await service.list_visible(user_id=admin.user_id, limit=200)
+    items, _ = await service.list_visible(user_id=current_user.user_id, limit=200)
     versions = [version for software in items for version in software.versions]
     return SoftwareSummary(
         total_packages=len(items),

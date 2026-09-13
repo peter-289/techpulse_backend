@@ -52,9 +52,10 @@ def get_current_user(
         token: str = Depends(oauth2_scheme),
 ) -> CurrentUser:
     try:
-        
+        #print("Token:", token)
         if not token:
             token = request.cookies.get(settings.ACCESS_COOKIE_NAME)
+            #print("Token:", token)
         if not token:
             raise credentials_exception
         

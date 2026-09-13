@@ -5,16 +5,15 @@ import logging
 from fastapi.concurrency import run_in_threadpool
 from fastapi import Request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from ...schema.user_schema import UserCreate
 from app.infrastructure.database.models.user import User
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.security.password_manager import hash_password
-from ...rules import map_integrity_error, validate_password_strength
+from .rules import map_integrity_error, validate_password_strength
 from app.exceptions.exceptions import ConflictError, NotFoundError
 from app.modules.security.abuse_protection import AbuseProtection
-from app.modules.shared.dependencies import get_abuse_protection
 
 
 from sqlalchemy.exc import IntegrityError

@@ -32,8 +32,11 @@ class SoftwareModel(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[SoftwareStatus] = mapped_column(String(16), nullable=False, default=SoftwareStatus.ACTIVE)
     visibility: Mapped[SoftwareVisibility] = mapped_column(String(16), nullable=False, default=SoftwareVisibility.PRIVATE)
+
+    # Pricing will be intergrated here if need be.
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    
     access_policy: Mapped[AccessPolicy] = mapped_column(String(32), nullable=False, default=AccessPolicy.FREE)
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     
@@ -62,10 +65,17 @@ class SoftwareArtifactModel(Base):
     __table_args__ = (
         UniqueConstraint("storage_key"),
         Index("ix_sms_artifacts_file_hash", "file_hash"),
+        Index("ix_sms_artifacts_version_id", "version_id"),
+        Index("ix_sms_artifacts_version_id_status", "version_id", "status"),
         Index("ix_sms_artifacts_created_at", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("sms_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -76,11 +86,12 @@ class SoftwareArtifactModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
+    version: Mapped["SoftwareVersionModel"] = relationship(back_populates="artifacts", lazy="selectin")
+
 
 class SoftwareVersionModel(Base):
     __tablename__ = "sms_versions"
     __table_args__ = (
-        UniqueConstraint("artifact_id"),
         UniqueConstraint("software_id", "version", name="uq_sms_versions_software_version"),
         Index("ix_sms_versions_software_id", "software_id"),
         Index("ix_sms_versions_created_at", "created_at"),
@@ -92,10 +103,6 @@ class SoftwareVersionModel(Base):
     software_id: Mapped[str] = mapped_column(
         ForeignKey("sms_softwares.id", ondelete="CASCADE"),
         nullable=False,
-    )
-    artifact_id: Mapped[str | None] = mapped_column(
-        ForeignKey("sms_artifacts.id", ondelete="SET NULL"),
-        nullable=True,
     )
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     release_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -111,4 +118,9 @@ class SoftwareVersionModel(Base):
 
 
     software: Mapped[SoftwareModel] = relationship(back_populates="versions", lazy="selectin")
-    artifact: Mapped[SoftwareArtifactModel | None] = relationship(lazy="selectin")
+    artifacts: Mapped[list[SoftwareArtifactModel]] = relationship(
+        back_populates="version",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="SoftwareArtifactModel.created_at.asc()",
+    )

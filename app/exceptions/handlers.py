@@ -12,34 +12,11 @@ from app.exceptions.exceptions import (
     ValidationError,
     UnauthorizedError,
     TooManyRequestsError,
-    PurchaseNotFoundError,
-    PaymentDomainError,
     InvalidMoneyError,
     InvalidCurrencyError,
-    DuplicatePaymentError,
-    DuplicatePurchaseError,
-    InvalidWebhookSignatureError,
-    UnsupportedPaymentProviderError,
-    InvalidGatewayConfigurationError,
-    DuplicateGatewayRegistrationError,
     RepositoryUnavailableError,
-    OwnerCannotPurchaseError,
-    PaymentProviderGatewayError,
-    PaymentGatewayUnavailableError,
-    PaymentProviderTimeoutError,
-    PaymentProviderAuthenticationError,
-    PaymentProviderRequestError,
-    RefundFailedError, 
-    
 )
-from app.modules.billing.domain.exceptions import (
-    DuplicatePendingPaymentError,
-    InvalidPaymentStateTransitionError,
-    PaymentNotFoundError,
-    PaymentAccessDenied,
-    InvalidProviderReference,
-    WebhookProcessingError,
-)
+
 from app.modules.software_management.domain.exceptions import (
     SoftwareDomainError,
     SoftwareNotFoundError,
@@ -109,26 +86,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _too_many_requests_handler(_request: Request, exc: TooManyRequestsError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content={"detail": str(exc)})
     
-    @app.exception_handler(PaymentDomainError)
-    async def _payment_exception_handler(_request: Request, exc: PaymentDomainError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
-    
-    @app.exception_handler(PaymentNotFoundError)
-    async def _payment_not_found_handler(_request: Request, exc: PaymentNotFoundError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
-    
-    @app.exception_handler(DuplicatePendingPaymentError)
-    async def _duplicate_pending_payment_handler(_request: Request, exc: DuplicatePendingPaymentError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
-    
-    @app.exception_handler(InvalidPaymentStateTransitionError)
-    async def _invalid_payment_transition_handler(_request: Request, exc: InvalidPaymentStateTransitionError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
-    
-    @app.exception_handler(PurchaseNotFoundError)
-    async def _purchase_error_handler(_request: Request, exc: PurchaseNotFoundError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
-    
     @app.exception_handler(InvalidMoneyError)
     async def _invalid_money_handler(_request: Request, exc: InvalidMoneyError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)})
@@ -137,73 +94,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _invalid_currency_handler(_request: Request, exc: InvalidCurrencyError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)})
 
-    @app.exception_handler(DuplicatePaymentError)
-    async def _duplicate_payment_handler(_request: Request, exc: DuplicatePaymentError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
-
-    @app.exception_handler(DuplicatePurchaseError)
-    async def _duplicate_purchase_handler(_request: Request, exc: DuplicatePurchaseError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
-
-    @app.exception_handler(InvalidWebhookSignatureError)
-    async def _invalid_webhook_signature_handler(_request: Request, exc: InvalidWebhookSignatureError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
-
-    @app.exception_handler(UnsupportedPaymentProviderError)
-    async def _unsupported_payment_provider_handler(_request: Request, exc: UnsupportedPaymentProviderError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
-
-    @app.exception_handler(InvalidGatewayConfigurationError)
-    async def _invalid_gateway_configuration_handler(_request: Request, exc: InvalidGatewayConfigurationError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
-
-    @app.exception_handler(DuplicateGatewayRegistrationError)
-    async def _duplicate_gateway_registration_handler(_request: Request, exc: DuplicateGatewayRegistrationError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
-
     @app.exception_handler(RepositoryUnavailableError)
     async def _repository_unavailable_handler(_request: Request, exc: RepositoryUnavailableError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
-
-    @app.exception_handler(OwnerCannotPurchaseError)
-    async def _owner_cannot_purchase_handler(_request: Request, exc: OwnerCannotPurchaseError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
-
-    @app.exception_handler(PaymentProviderGatewayError)
-    async def _payment_provider_gateway_handler(_request: Request, exc: PaymentProviderGatewayError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
-
-    @app.exception_handler(PaymentGatewayUnavailableError)
-    async def _payment_gateway_unavailable_handler(_request: Request, exc: PaymentGatewayUnavailableError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
-
-    @app.exception_handler(PaymentProviderTimeoutError)
-    async def _payment_provider_timeout_handler(_request: Request, exc: PaymentProviderTimeoutError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_504_GATEWAY_TIMEOUT, content={"detail": str(exc)})
-
-    @app.exception_handler(PaymentProviderAuthenticationError)
-    async def _payment_provider_authentication_handler(_request: Request, exc: PaymentProviderAuthenticationError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
-
-    @app.exception_handler(PaymentProviderRequestError)
-    async def _payment_provider_request_handler(_request: Request, exc: PaymentProviderRequestError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
-
-    @app.exception_handler(RefundFailedError)
-    async def _refund_failed_handler(_request: Request, exc: RefundFailedError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
-
-    @app.exception_handler(PaymentAccessDenied)
-    async def _payment_access_denied_handler(_request: Request, exc: PaymentAccessDenied) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
-
-    @app.exception_handler(InvalidProviderReference)
-    async def _invalid_provider_reference_handler(_request: Request, exc: InvalidProviderReference) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
-
-    @app.exception_handler(WebhookProcessingError)
-    async def _webhook_processing_error_handler(_request: Request, exc: WebhookProcessingError) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
     @app.exception_handler(SoftwareDomainError)
     async def _software_domain_error_handler(_request: Request, exc: SoftwareDomainError) -> JSONResponse:

@@ -5,13 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
 from app.modules.user.infrastructure.persistence.repository.session_repo import SessionRepo
 from app.modules.user.infrastructure.persistence.repository.support_chat_repo import ChatMessageRepo
-from app.modules.projects.infrastructure.persistence.repository.project_repo import ProjectRepo
 from app.modules.resource.resource_repo import ResourceRepo
 from app.modules.security.audit import AuditRepository
 from app.modules.software_management.infrastructure.persistence.repositories.sqlalchemy_software_repository import SQLAlchemySoftwareRepository
 from app.modules.software_management.infrastructure.persistence.repositories.category_repo import CategoryRepository
-from app.modules.billing.infrastructure.persistence.sqlalchemy_purchase_repository import PurchaseRepository
-from app.modules.billing.infrastructure.persistence.sqlalchemy_payment_repository import PaymentRepository
 
 
 
@@ -32,15 +29,11 @@ class UnitOfWork:
         self._user_repo = None
         self._session_repo = None
         self._chat_message_repo = None
-        self._project_repo = None
         self._resource_repo = None
         self._audit_repo = None         
         self._software_repo = None
         self._category_repo = None
-        self._purchase_repo = None
-        self._payment_repo = None
-
-
+        
 
     @property
     def user_repo(self)-> UserRepo:
@@ -59,12 +52,6 @@ class UnitOfWork:
         if self._chat_message_repo is None:
             self._chat_message_repo = ChatMessageRepo(self.session)
         return self._chat_message_repo
-
-    @property
-    def project_repo(self) -> ProjectRepo:
-        if self._project_repo is None:
-            self._project_repo = ProjectRepo(self.session)
-        return self._project_repo
 
     @property
     def resource_repo(self) -> ResourceRepo:
@@ -90,18 +77,6 @@ class UnitOfWork:
             self._category_repo = CategoryRepository(self.session)
         return self._category_repo
 
-
-    @property
-    def purchase_repository(self) -> PurchaseRepository:
-        if self._purchase_repo is None:
-            self._purchase_repo = PurchaseRepository(self.session)
-        return self._purchase_repo
-
-    @property
-    def payment_repository(self) -> "PaymentRepository":
-        if self._payment_repo is None:
-            self._payment_repo = PaymentRepository(self.session)
-        return self._payment_repo
 
     
     async def commit(self) -> None:

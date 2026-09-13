@@ -36,8 +36,8 @@ def test_sms_version_becomes_downloadable_only_after_scan_and_publish() -> None:
         updated_at=datetime.now(timezone.utc),
     )
 
+    version.add_artifact(artifact)
     software.add_version(version)
-    version.attach_artifact(artifact)
     assert not version.is_downloadable()
 
     artifact.process_malware_scan_success(
@@ -45,6 +45,8 @@ def test_sms_version_becomes_downloadable_only_after_scan_and_publish() -> None:
             software_id=software.id,
             version_id=version.id,
             artifact_id=artifact.id,
+            actor_id=software.owner_id,
+            aggregate_id=software.id,
         )
     )
     software.publish_version(version.id)
@@ -103,7 +105,7 @@ def test_paid_download_requires_purchase() -> None:
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
-    version.attach_artifact(artifact)
+    version.add_artifact(artifact)
     software.add_version(version)
     software.publish_version(version.id)
 
@@ -124,6 +126,10 @@ def test_paid_download_requires_purchase() -> None:
     class Storage:
         def create_download_url(self, storage_key):
             return f"https://example.com/download/{storage_key}"
+
+    class DownloadService:
+        def create_download_url(self, *, software_id, version_number, user_id):
+            raise AssertionError("download service should not be reached for denied downloads")
 
     class _ReadOnlyCM:
         async def __aenter__(self):
@@ -150,6 +156,7 @@ def test_paid_download_requires_purchase() -> None:
     service = SoftwareService.__new__(SoftwareService)
     service._uow = UnitOfWork()
     service.repository = Repository()
+    service._download_service = DownloadService()
     service.session = Session()
     service.storage = Storage()
 

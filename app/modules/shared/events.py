@@ -22,11 +22,11 @@ class DomainEvent:
           - Domain events never dispatch themselves.
           - Infrastructure is responsible for publishing them.
     """
-    agregate_id: UUID
+    aggregate_id: UUID
     event_id: UUID = field(default_factory=uuid4)
     actor_id: UUID | None = None
 
-    occured_at: datetime = field(default_factory=datetime(timezone.utc))
+    occured_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def event_type(self) -> str:

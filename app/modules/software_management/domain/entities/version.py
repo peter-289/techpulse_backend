@@ -30,7 +30,7 @@ class Version:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     published_at: datetime | None = None
-    artifact: list[Artifact] | None = None
+    _artifacts: list[Artifact] = field(default_factory=list, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.created_at = _ensure_utc(self.created_at)
@@ -38,20 +38,44 @@ class Version:
         if self.published_at is not None:
             self.published_at = _ensure_utc(self.published_at)
 
-    def attach_artifact(self, artifact: Artifact) -> None:
-        """ Attach an artifact to a version."""
+    @property
+    def artifacts(self) -> tuple[Artifact, ...]:
+        return tuple(self._artifacts)
+
+    def add_artifact(self, artifact: Artifact) -> None:
+        """Attach an artifact to this version."""
+        self._ensure_modifiable()
+        if self.status == VersionStatus.DELETED:
+            raise InvalidStateTransitionError("Deleted version cannot receive artifacts.")
         if artifact.version_id != self.id:
             raise InvalidStateTransitionError("Artifact does not belong to this version.")
-        self.artifact = artifact
+        if any(existing.id == artifact.id for existing in self._artifacts):
+            raise InvalidStateTransitionError("Duplicate artifact cannot be attached.")
+        if any(existing.filename == artifact.filename for existing in self._artifacts):
+            raise InvalidStateTransitionError("Duplicate artifact filename in version.")
+        self._artifacts.append(artifact)
         self._touch()
+
+    def remove_artifact(self, artifact_id: UUID) -> None:
+        """Remove an artifact from this version."""
+        self._ensure_modifiable()
+        if self.status == VersionStatus.DELETED:
+            raise InvalidStateTransitionError("Deleted version cannot remove artifacts.")
+        for index, artifact in enumerate(self._artifacts):
+            if artifact.id == artifact_id:
+                del self._artifacts[index]
+                self._touch()
+                return
+        raise InvalidStateTransitionError(f"Artifact {artifact_id} not found.")
 
     def publish(self) -> None:
         """ Publish a version."""
         self._ensure_modifiable()
-        if self.artifact is None:
-            raise InvalidStateTransitionError("Version requires artifact before publishing.")
-        if self.artifact.status != ArtifactStatus.ACTIVE:
-            raise MalwareScanPendingError("Artifact cannot become downloadable until malware scan succeeds.")
+        if not self._artifacts:
+            raise InvalidStateTransitionError("Version requires at least one artifact before publishing.")
+        for a in self._artifacts:
+           if a.status != ArtifactStatus.ACTIVE:
+              raise MalwareScanPendingError("Artifact cannot become downloadable until malware scan succeeds.")
         self.status = VersionStatus.PUBLISHED
         if self.published_at is None:
             self.published_at = utc_now()
@@ -72,9 +96,6 @@ class Version:
         self.status = VersionStatus.DEPRECATED
         self._touch()
     
-    def remove(self) -> None:
-        """ Remove a version"""
-        
     def revoke(self) -> None:
         """ Revoke a version"""
         if self.status == VersionStatus.REVOKED:
@@ -82,6 +103,7 @@ class Version:
         self.status = VersionStatus.REVOKED
         self._touch()
 
+    # === QUERIES ===
     def is_downloadable(self) -> bool:
         """ Check if a version is downloadable."""
         return self.status in {VersionStatus.PUBLISHED, VersionStatus.DEPRECATED}

@@ -1,8 +1,7 @@
 from pathlib import Path
-from urllib.parse import urlparse
-from sqlalchemy.engine import make_url
+from urllib.parse import quote, urlparse
 
-from dataclasses import dataclass
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -83,17 +82,22 @@ class AppSettings(BaseSettings):
 
     @property
     def REDIS_URL(self) -> str:
+        host = (self.REDIS_HOST or "localhost").strip()
+        if host.startswith(("redis://", "rediss://")):
+            return host
+
         auth = ""
+        username = (self.REDIS_USERNAME or "").strip()
+        password = (self.REDIS_PASSWORD or "").strip()
 
-        if self.REDIS_USERNAME and self.REDIS_PASSWORD:
-            auth = f"{self.REDIS_USERNAME}:{self.REDIS_PASSWORD}@"
-        elif self.REDIS_PASSWORD:
-            auth = f":{self.REDIS_PASSWORD}@"
+        if username and password:
+            auth = f"{quote(username)}:{quote(password)}@"
+        elif username:
+            auth = f"{quote(username)}@"
+        elif password:
+            auth = f":{quote(password)}@"
 
-        return (
-            f"redis://{auth}"
-            f"{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        )
+        return f"redis://{auth}{host}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
 
     # Email
@@ -109,7 +113,7 @@ class AppSettings(BaseSettings):
 
     # URLs
     BASE_URL: str = "http://127.0.0.1:8000"
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "http://localhost:5173/"
     BACKEND_URL: str = ""
 
     # Project management
@@ -228,7 +232,19 @@ class AppSettings(BaseSettings):
 
         # Cookie management
         self.COOKIE_SAMESITE = (self.COOKIE_SAMESITE or "lax").lower()
-        self.COOKIE_DOMAIN = (self.COOKIE_DOMAIN or "").strip() or None
+        cookie_domain = (self.COOKIE_DOMAIN or "").strip()
+        if cookie_domain.upper() in {"COOKIE_DOMAIN", "NONE", "NULL", ""}:
+            cookie_domain = ""
+        self.COOKIE_DOMAIN = cookie_domain or None
+
+        is_local_http = (
+            (self.BACKEND_URL or "").lower().startswith("http://")
+            or (self.FRONTEND_URL or "").lower().startswith("http://")
+        )
+        if is_local_http:
+            self.COOKIE_SECURE = False
+        if self.COOKIE_SAMESITE == "none" and not self.COOKIE_SECURE:
+            self.COOKIE_SAMESITE = "lax"
 
         # Password reset secret
         self.PASSWORD_RESET_SECRET = (
@@ -245,6 +261,8 @@ class AppSettings(BaseSettings):
             raise RuntimeError("MALWARE_SCAN_PROVIDER must be 'local' until a scanner adapter is configured.")
         if self.COOKIE_SAMESITE not in {"lax", "strict", "none"}:
             raise RuntimeError("COOKIE_SAMESITE must be one of: lax, strict, none.")
+        if self.COOKIE_SAMESITE == "none" and not self.COOKIE_SECURE:
+            raise RuntimeError("COOKIE_SAMESITE='none' requires COOKIE_SECURE=True.")
         return self
 
     def validate_security(self) -> None:

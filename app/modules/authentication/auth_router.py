@@ -32,35 +32,6 @@ def get_service(
     return AuthService(uow=uow, abuse_protection=abuse)
 
 
-
-
-# Rate limiting functionality
-"""
-def _enforce_rate_limit(
-    *,
-    request: Request,
-    scope: str,
-    limit: int,
-    window_seconds: int,
-    identifier: str | None = None,
-) -> None:
-    ip_address = request.client.host if request and request.client else "unknown"
-    key = f"{ip_address}:{(identifier or '').strip().lower()}"
-    limited, retry_after = abuse_protection.hit_rate_limit(
-        scope=scope,
-        key=key,
-        limit=limit,
-        window_seconds=window_seconds,
-    )
-    if limited:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests. Please try again later.",
-            headers={"Retry-After": str(retry_after)},
-        )
-
-"""
-
 def _set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
     access_max_age = settings.LOGIN_TOKEN_EXPIRE_MINUTES * 60
     refresh_max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
@@ -154,7 +125,9 @@ async def refresh_session(
     
     # Get refresh token from cookie
     has_access_cookie = bool(request.cookies.get(settings.ACCESS_COOKIE_NAME)) if request else False
+    #print(has_access_cookie)
     refresh_token = request.cookies.get(settings.REFRESH_COOKIE_NAME) if request else None
+    #print("REFRESH TOKEN:", refresh_token)
     logger.info(
         "[auth.refresh] origin=%s has_access_cookie=%s has_refresh_cookie=%s",
         request.headers.get("origin"),

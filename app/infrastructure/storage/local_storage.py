@@ -166,7 +166,7 @@ class DownloadUrlSigner(Protocol):
     
 class HmacDownloadUrlSigner(DownloadUrlSigner):
     """This implementation of DownloadUrlSigner uses HMAC to sign and verify download URLs."""
-    def __init__(self, settings: DownloadUrlSignerSettings) -> None:
+    def __init__(self, settings: DownloadUrlSignerSettings) -> None: #type: ignore
 
         self._settings = settings
     
@@ -398,7 +398,7 @@ class LocalStorage(Storage):
 
     __slots__ = ("_settings",)
 
-    def __init__(self, *, settings: StorageSettings) -> None:
+    def __init__(self, *, settings: StorageSettings) -> None: #type: ignore
         """Initialize the storage adapter.
 
         Args:

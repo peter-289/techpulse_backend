@@ -4,20 +4,29 @@ from uuid import UUID, uuid4
 
 
 from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility, AccessType
-from app.modules.software_management.domain.events import (
-    SoftwareDownloadedEvent,
-    SoftwareEvent,
-    VersionPublishedEvent,
-    software_created,
-    utc_now,
-    version_published,
-)
 from app.modules.software_management.domain.exceptions import InvalidStateTransitionError, SoftwareNotFoundError
 from app.modules.software_management.domain.value_objects import SemVer
 from app.modules.software_management.domain.entities.version import Version
-from app.modules.billing.domain.value_objects import Currency, Money
+from app.modules.software_management.domain.value_objects.value_objects import Currency, Money
 from app.modules.shared.root_aggregate import AggregateRoot
+from app.modules.software_management.domain.events import (
+    SoftwareDownloadedEvent,
+    SoftwareAccessPolicyUpdatedEvent,
+    SoftwareArchivedEvent,
+    SoftwarePriceUpdatedEvent,
+    SoftwareDeletedEvent,
+    SoftwareVisibilityUpdatedEvent,
+    SoftwarePublishedEvent,
+    SoftwareRestoredEvent,
+    VersionAddedEvent,
+    VersionDeprecatedEvent,
+    VersionPublishedEvent,
+    VersionRemovedEvent,
+    VersionRevokedEvent,
+)
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -48,7 +57,7 @@ class Software(AggregateRoot):
     deleted_by: UUID | None = None
     deleted_at: datetime | None = None
 
-   # _events: list[SoftwareEvent] = field(default_factory=list, init=False, repr=False)
+   
 
     @classmethod
     def create(
@@ -81,16 +90,12 @@ class Software(AggregateRoot):
             visibility=visibility,
             access_type=access_type,
             price=price,
-        )._emit_created()
+        )
 
     def __post_init__(self) -> None:
         self.created_at = _ensure_utc(self.created_at)
         self.updated_at = _ensure_utc(self.updated_at)
 
-    def _emit_created(self) -> "Software":
-        """Emit a Software created event."""
-       # self._record_events.software_created(self.id, self.owner_id))
-        return self
 
     # Check if a software is modifiable.
     def _ensure_modifiable(self) -> None:
@@ -113,8 +118,18 @@ class Software(AggregateRoot):
         """
         self._ensure_modifiable()
         normalized = max(price_cents, 0)
+        old_price = self.price
         self.price = Money(amount_cents=normalized, currency=Currency(code=currency))
         self._touch()
+
+        self._record_event(
+            SoftwarePriceUpdatedEvent(
+                old_price=old_price,
+                new_price=self.price,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
 
 
     # == SOFTWARE MANAGEMENT ===
@@ -134,9 +149,22 @@ class Software(AggregateRoot):
 
     def change_visibility(self, visibility: SoftwareVisibility) -> None:
         """Change the visibility of the software."""
+
+        old_visibility = self.visibility
         self._ensure_modifiable()
         self.visibility = visibility
         self._touch()
+        
+        # Emit an event.
+        self._record_event(
+            SoftwareVisibilityUpdatedEvent(
+                old_visibility=old_visibility,
+                new_visibility=self.visibility,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
+
         
     def publish(self) -> None:
         """Publish the software."""
@@ -146,14 +174,32 @@ class Software(AggregateRoot):
         self.status = SoftwareStatus.ACTIVE
         self._touch()
 
-    def mark_deleted(self, *, actor_id: UUID, marked_at: datetime | None) -> None:
+        self._record_event(
+            SoftwarePublishedEvent(
+                published_at=utc_now(),
+                actor_id=self.owner_id,
+            )
+        )
+
+    def mark_deleted(self, *, actor_id: UUID) -> None:
         """Mark the software as deleted.
            Deleted software is not modifiable and cannot be published."""
         self._ensure_modifiable()
+
+        deleted_at = datetime.now(timezone.utc)
         self.status = SoftwareStatus.DELETED
-        self.deleted_at = marked_at or utc_now()
+        self.deleted_at = deleted_at
         self.deleted_by = actor_id
         self._touch()
+
+        # Emit  DomainEvent
+        self._record_event(
+            SoftwareDeletedEvent(
+                deleted_at=deleted_at,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
 
     def archive(self) -> None:
         """Archive the software. 
@@ -163,6 +209,14 @@ class Software(AggregateRoot):
         self._ensure_modifiable()
         self.status = SoftwareStatus.ARCHIVED
         self._touch()
+        # Emit a DomainEvent
+        self._record_event(
+            SoftwareArchivedEvent(
+                software_id=self.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
 
     def restore(self) -> None:
         """Restore the software from ARCHIVED or DELETED state.
@@ -186,6 +240,14 @@ class Software(AggregateRoot):
         self.deleted_at = None
         self.deleted_by = None
         self._touch()
+        # Emit a DomainEvent
+        self._record_event(
+            SoftwareRestoredEvent(
+                software_id=self.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,    
+            )
+        )
 
     
     def change_access_policy(self, access_type: AccessType) -> None:
@@ -193,6 +255,14 @@ class Software(AggregateRoot):
         self._ensure_modifiable()
         self.access_type = access_type
         self._touch()
+        # Emit a DomainEvent
+        self._record_event(
+            SoftwareAccessPolicyUpdatedEvent(
+                software_id=self.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
     
 
     # === VERSION MANAGEMENT ===
@@ -205,6 +275,16 @@ class Software(AggregateRoot):
             raise InvalidStateTransitionError(f"Version {version.number} already exists.")
         self.versions.append(version)
         self._touch()
+        # Emit an event DomainEvent
+        self._record_event(
+            VersionAddedEvent(
+                added_at=utc_now(),
+                software_id=self.id,
+                version_id=version.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
 
     def get_version(self, version_id: UUID) -> Version:
         """Get a version by its ID.
@@ -237,27 +317,54 @@ class Software(AggregateRoot):
                 return version
         raise SoftwareNotFoundError(f"Version {semver} not found.")
 
-    def publish_version(self, version_id: UUID) -> VersionPublishedEvent:
+    def publish_version(self, version_id: UUID) -> None:
         """Publish a version of the software."""
         self._ensure_modifiable()
         version = self.get_version(version_id)
         version.publish()
-        event = version_published(self.id, version.id)
-        self._events.append(event)
         self._touch()
-        return event
+        # Emit an event DomainEvent
+        self._record_event(
+            VersionPublishedEvent(
+                software_id=self.id,
+                version_id=version.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
+        
 
     def deprecate_version(self, version_id: UUID) -> None:
         """Deprecate a version of the software."""
         self._ensure_modifiable()
         self.get_version(version_id).deprecate()
         self._touch()
+        # Emit an event DomainEvent
+        self._record_event(
+            VersionDeprecatedEvent(
+                deprecated_at=datetime.now(timezone.utc),
+                software_id=self.id,
+                version_id=version_id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
 
     def revoke_version(self, version_id: UUID) -> None:
         """Revoke a version of the software."""
         self._ensure_modifiable()
         self.get_version(version_id).revoke()
         self._touch()
+        # Emit an event DomainEvent
+        self._record_event(
+            VersionRevokedEvent(
+                revoked_at=datetime.now(timezone.utc),
+                version_id=version_id,
+                software_id=self.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
     
     def remove_version(self, version_id: UUID) -> None:
         """Remove a version of the software."""
@@ -265,6 +372,16 @@ class Software(AggregateRoot):
         version = self.get_version(version_id)
         self.versions.remove(version)
         self._touch()
+        # Emit an event DomainEvent
+        self._record_event(
+            VersionRemovedEvent(
+                removed_at=datetime.now(timezone.utc),
+                software_id=self.id,
+                version_id=version_id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
 
     def latest_downloadable(self) -> Version | None:
         """Get the latest downloadable version of the software.
@@ -333,17 +450,15 @@ class Software(AggregateRoot):
         self._ensure_modifiable()
         self.download_count += 1
         self._touch()
-        self._events.append(SoftwareDownloadedEvent(
-            software_id=self.id,
-            occurred_at=utc_now(),
+        self._record_event(
+            SoftwareDownloadedEvent(
+                software_id=self.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+                occurred_at=utc_now(),
         ))
 
-    def pull_events(self) -> list[SoftwareEvent]:
-        """Pull and clear the list of events for the software."""
-        events = list(self._events)
-        self._events.clear()
-        return events
-
+   
     # === Compatibility layer ===
     # Internal code may call these query helpers; keep them side-effect free.
     def is_publicly_visible(self) -> bool:

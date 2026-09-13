@@ -6,16 +6,13 @@ from fastapi import HTTPException, status
 from app.modules.software_management.domain.entities.artifact import Artifact
 from app.modules.software_management.domain.entities.software import Software
 from app.modules.software_management.domain.entities.version import Version
-from app.modules.software_management.schema.software_schema import SoftwareCheckoutRead, SoftwareRead, SoftwareVersionRead
+from app.modules.software_management.schema.software_schema import ArtifactResponse, SoftwareRead, SoftwareVersionRead
 from app.modules.shared.enums import ArtifactStatus, VersionStatus, SoftwareStatus, SoftwareVisibility
 from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
 
 from app.modules.software_management.domain.exceptions import SoftwareDomainError, SoftwareAccessDeniedError, SoftwareNotFoundError
 from app.modules.software_management.domain.value_objects import SemVer
-from app.modules.billing.domain.value_objects import Currency, Money
-
-
-
+from app.modules.software_management.domain.value_objects.value_objects import Currency, Money
 
 
 def _actor_uuid(user_id: int) -> UUID:
@@ -58,67 +55,29 @@ def _software_item(software: Software, *, viewer_user_id: UUID) -> SoftwareRead:
 
 def _version_item(version: Version) -> SoftwareVersionRead:
     """Version read model"""
-    artifact = version.artifact
     return SoftwareVersionRead(
         id=version.id,
         software_id=version.software_id,
-        artifact_id=artifact.id if artifact else None,
         version=version.number,
         status=version.status,
         download_count=version.download_count,
         release_notes=version.release_notes,
         created_at=version.created_at,
         published_at=version.published_at,
-        file_hash=artifact.sha256 if artifact else None,
-        size_bytes=artifact.size_bytes if artifact else None,
-        content_type=artifact.mime_type if artifact else None,
-        file_name=artifact.filename if artifact else None,
-        artifact_status=artifact.status.value if artifact else None,
+        artifacts=[
+            ArtifactResponse(
+                id=artifact.id,
+                filename=artifact.filename,
+                size_bytes=artifact.size_bytes,
+                sha256=artifact.sha256,
+                content_type=artifact.mime_type,
+                status=artifact.status.value,
+            )
+            for artifact in version.artifacts
+        ],
     )
 
 
-def _payment_item(payment_or_session: object, *, owner_id: UUID) -> SoftwareCheckoutRead:
-    from app.modules.billing.api.schemas.payment_schema import CheckoutSessionRead
-    from app.modules.billing.domain.payment import Payment
-
-    if isinstance(payment_or_session, CheckoutSessionRead):
-        session = payment_or_session
-        return SoftwareCheckoutRead(
-            id=str(session.id),
-            software_id=str(session.software_id),
-            buyer_id=int(session.buyer_id.int),
-            owner_id=int(owner_id.int),
-            amount_cents=session.amount_cents,
-            currency=session.currency,
-            status=session.status.value,
-            provider=session.provider.value,
-            provider_reference=session.provider_reference,
-            client_secret=None,
-            checkout_url=session.checkout_url,
-            created_at=session.created_at.isoformat(),
-            completed_at=session.completed_at.isoformat() if session.completed_at else None,
-        )
-
-    if isinstance(payment_or_session, Payment):
-        payment = payment_or_session
-        reference = payment.provider_details.reference if payment.provider_details else None
-        return SoftwareCheckoutRead(
-            id=str(payment.id),
-            software_id=str(payment.subject.resource_id),
-            buyer_id=int(payment.buyer_id.int),
-            owner_id=int(owner_id.int),
-            amount_cents=payment.amount.amount_cents,
-            currency=str(payment.amount.currency),
-            status=payment.status.value,
-            provider=payment.provider.value,
-            provider_reference=reference,
-            client_secret=None,
-            checkout_url=None,
-            created_at=payment.created_at.isoformat(),
-            completed_at=payment.completed_at.isoformat() if payment.completed_at else None,
-        )
-
-    raise TypeError(f"Cannot map {type(payment_or_session)} to SoftwareCheckoutRead")
 
 
 def _error(exc: SoftwareDomainError) -> HTTPException:
@@ -174,7 +133,7 @@ def _version_to_entity(model: SoftwareVersionModel) -> Version:
         created_at=model.created_at,
         updated_at=model.updated_at,
         published_at=model.published_at,
-        artifact=_artifact_to_entity(model.artifact, model.id) if model.artifact else None,
+        _artifacts=[_artifact_to_entity(artifact, model.id) for artifact in model.artifacts],
     )
 
 
@@ -204,6 +163,7 @@ def _software_to_entity(model: SoftwareModel) -> Software:
 def _artifact_to_model(entity: Artifact) -> SoftwareArtifactModel:
     return SoftwareArtifactModel(
         id=str(entity.id),
+        version_id=str(entity.version_id),
         storage_key=entity.storage_key,
         file_hash=entity.sha256,
         size_bytes=entity.size_bytes,
@@ -229,10 +189,7 @@ def _version_to_model(entity: Version) -> SoftwareVersionModel:
         updated_at=entity.updated_at,
         published_at=entity.published_at,
     )
-    if entity.artifact is not None:
-        artifact = _artifact_to_model(entity.artifact)
-        model.artifact = artifact
-        model.artifact_id = artifact.id
+    model.artifacts = [_artifact_to_model(artifact) for artifact in entity.artifacts]
     return model
 
 

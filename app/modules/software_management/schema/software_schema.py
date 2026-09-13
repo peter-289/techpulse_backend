@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -45,12 +44,7 @@ class SoftwareVersionRead(BaseModel):
     created_at: datetime
     published_at: datetime | None
 
-    artifact_id: Optional[UUID] = None
-    artifact_status: Optional[str] = None
-    file_hash: Optional[str] = None
-    size_bytes: Optional[int] = None
-    content_type: Optional[str] = None
-    file_name: Optional[str] = None
+    artifacts: list["ArtifactResponse"] = Field(default_factory=list)
     
 
     model_config = {
@@ -59,13 +53,24 @@ class SoftwareVersionRead(BaseModel):
     }
 
 
+class ArtifactResponse(BaseModel):
+    id: UUID
+    filename: str
+    size_bytes: int
+    sha256: str
+    content_type: str | None = None
+    status: str | None = None
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
 class SoftwareUploadResponse(BaseModel):
-    id: str
     software_id: str
     version_id: str
     version: str
-    size_bytes: int
-    sha256: str
+    artifacts: list[ArtifactResponse] = Field(default_factory=list)
 
 
 class SoftwarePricingUpdate(BaseModel):

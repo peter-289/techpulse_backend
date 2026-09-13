@@ -4,6 +4,7 @@ import re
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path as ApiPath, Query
 from sqlalchemy import select
@@ -104,7 +105,7 @@ async def acknowledge_security_alert(
 @router.get("/audit-events", status_code=200)
 async def list_audit_events(
     event_type: str | None = Query(None, max_length=120),
-    actor_user_id: int | None = Query(None, ge=1),
+    actor_user_id: UUID | None = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     _admin: dict = Depends(require_role("ADMIN")),

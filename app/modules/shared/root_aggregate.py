@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import List, Final
 from abc import ABC
 from app.modules.shared.events import DomainEvent
+from dataclasses import dataclass, field
 
-
+@dataclass
 class AggregateRoot(ABC):
     """ Base class for all aggregate roots.
         
@@ -18,11 +19,7 @@ class AggregateRoot(ABC):
            - The `UnitOfWork` is responsible for pulling and dispatching them after a successful transaction commit.
     """
 
-    __slots__ = ("_events",)
-
-    def __init__(self) -> None:
-        self._events: list[DomainEvent] = []
-
+    _events: List[DomainEvent] = field(default_factory=list, init=False, repr=False)
 
     def _record_event(self, event: DomainEvent) -> None:
         """Record a new domain event."""

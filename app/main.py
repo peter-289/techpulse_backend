@@ -19,14 +19,12 @@ from app.modules.security.audit_middleware import AuditMiddleware
 from app.modules.user.api.router.user_router import router as user_router
 from app.modules.authentication.auth_router import router as auth_router
 from app.modules.user.api.router.support_chat_router import router as support_chat_router
-from app.modules.projects.api.router.projects_router import router as project_router
+
 from app.modules.resource.resources_router import router as resource_router
 from app.modules.user.api.router.admin_router import router as admin_router
 from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.software_management.api.routers.software_router import router as software_management_router
 from app.modules.software_management.api.routers.category_router import router as category_router
-from app.modules.billing.api.purchase_router import router as purchase_router
-from app.modules.billing.api.payment_router import router as payment_router
 
 from app.core.lifespan import app_lifespan
 
@@ -62,7 +60,12 @@ def _normalize_origins(raw_origins: str) -> list[str]:
 
 # Origins
 origins = _normalize_origins(settings.FRONTEND_URL)
-for fallback_origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+for fallback_origin in (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+):
     if fallback_origin not in origins:
         origins.append(fallback_origin)
 
@@ -98,14 +101,11 @@ async def health_check():
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(support_chat_router)
-app.include_router(project_router)
 app.include_router(resource_router)
 app.include_router(admin_router)
 app.include_router(analytics_router)
 app.include_router(software_management_router)
 app.include_router(category_router)
-app.include_router(purchase_router)
-app.include_router(payment_router)
 
 # Serve frontend build in production if present
 frontend_build = Path(__file__).resolve().parents[2] / "frontend" / "build"

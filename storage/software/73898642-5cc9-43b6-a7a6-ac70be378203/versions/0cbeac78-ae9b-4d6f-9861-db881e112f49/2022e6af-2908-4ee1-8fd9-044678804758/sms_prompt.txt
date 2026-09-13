@@ -1,0 +1,35 @@
+FRONTEND USER/CLIENT SIDE STRUCTURE
+This is a software management system and for the user side we came up with the following:
+An authenticated user can upload a software and manage it in their dashboards.
+An authenticated user can also see other authenticated users public projects they upload.
+
+A software has its state in an enum and also a version has its state.
+the user dashboards renders the software cards and when a user clicks on the card they are taken to a software page which has multiple actions that can be performed to it.
+For a normal user the flow is simple:
+Log in with your credentials -> Get in your dashboard -> view projects
+The dashboard has a collapsable menu that exposes different things.
+
+Scince most features are already implemente, i will focus on what we should expect what the next update will focus on.
+1. Project/ Software management
+ -- A user who owns software here can do the following on it(A dedicated page after clicking the card):
+      * Deprecate version(with info on what changed)
+	  * Revoke version(No longer usable)
+	  * Update metadata
+	  * They can add upload another newer version of the software and update us on what changed
+	  An admin can suspend a software if a virus scanning module found a virus in the software.
+	  * Delete both a version and a software itself. Via manage project/software(Github style)
+	  
+A software has multiple versions. This means that when a user clicks on the software card on their dashboard they are taken to 
+another page containing a list of versions(links) that take them to another page dedicated for that version. They may contain a link to documentation or release notes if present.
+We expect a clean implementation of the UI/UX design and a clear seperation of concerns.
+
+Every uploaded software belongs to a category else it belongs to others.
+
+There is also subscription a user can see private software cards of other users but can not do anything unless they have an active subscription.
+if a user tries to download they are taken to a page with cards that has 3 subscription plans with each offering better project management and better tooling. each of the 3 cards has a button that takes the user to a form that
+requires them to fill payment options and additionall billing information.
+
+Once a user is on a plan, They can download private softwares.
+NOTE// This is only a frontend implementation backend implementationwill follow.
+
+INSTRUCTIONS FOR AI AGENT: BEFORE DOING ANYTHING CONTAINED IN THIS PROMPT DO A PROPER RESEARCH ON CURRENT TRENDS AND EXISTING SYSTEMS THAT DO SIMILAR TASKS AND BORROW USEFULL CONCEPTS FROM THEM.

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
 from uuid import UUID
 import logging
 from datetime import datetime, timezone
@@ -15,11 +14,9 @@ from app.modules.software_management.domain.ports.repositories.software_reposito
 from app.modules.software_management.domain.entities.software import Software
 from app.modules.software_management.domain.value_objects import SoftwareCard, OwnedSoftwareCard
 from app.modules.software_management.domain.exceptions import RepositoryUnavailableError, SoftwareNotFoundError
-from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
+from app.infrastructure.database.models.software import SoftwareModel, SoftwareVersionModel
 from app.modules.shared.mappers import _software_to_entity, _software_to_model
 from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
-from app.infrastructure.database.models.payment import SoftwarePurchaseModel
-
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -39,7 +36,7 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
                      select(SoftwareModel)
                      .where(SoftwareModel.id == str(software_id))
                      .options(selectinload(SoftwareModel.versions)
-                     .selectinload(SoftwareVersionModel.artifact))
+                     .selectinload(SoftwareVersionModel.artifacts))
                     )
             model = await self.session.scalar(stmt)
             if model is None:
@@ -69,14 +66,7 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
            raise RepositoryUnavailableError(
             f"Failed to stage software aggregation."
            ) from exc
-    
-    async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
-        stmt = select(SoftwarePurchaseModel.id).where(
-            SoftwarePurchaseModel.software_id == str(software_id),
-            SoftwarePurchaseModel.buyer_id == str(user_id),
-        )
-        results = await self.session.scalar(stmt)
-        return results is not None
+
     
     async def list_marketplace(
     self,
@@ -252,7 +242,7 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
         try:
             q = query.strip() if query else None
             stmt = select(SoftwareModel).options(
-                selectinload(SoftwareModel.versions).selectinload(SoftwareVersionModel.artifact)
+                selectinload(SoftwareModel.versions).selectinload(SoftwareVersionModel.artifacts)
             ).where(
                 SoftwareModel.visibility == SoftwareVisibility.PUBLIC,
                 SoftwareModel.status != SoftwareStatus.DELETED,

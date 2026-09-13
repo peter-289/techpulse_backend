@@ -1,7 +1,7 @@
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from app.modules.software_management.domain.events import SoftwareEvent
+from app.modules.software_management.domain.events.events import SoftwareDomainEvent
 
 
 @runtime_checkable
@@ -12,7 +12,7 @@ class NotificationSender(Protocol):
         self,
         *,
         recipient_id: UUID,
-        event: SoftwareEvent,
+        event: SoftwareDomainEvent,
         channels: list[str],
     ) -> None:
         """Deliver a domain event to the specified recipient via channels."""

@@ -10,8 +10,10 @@ from typing import Optional
 from fastapi import Request
 from redis.asyncio import Redis
 
+from app.core.config import settings
 from app.exceptions.exceptions import TooManyRequestsError
 
+# Get logger
 logger = logging.getLogger(__name__)
 
 
@@ -23,15 +25,25 @@ class Bucket:
 
 @dataclass(frozen=True)
 class RateLimitPolicy:
-    capacity: int
-    refill_rate: float
+    capacity: int  # 
+    refill_rate: float #
 
 
-LOGIN_POLICY = RateLimitPolicy(capacity=5, refill_rate=1 / 12)
-REGISTRATION_POLICY = RateLimitPolicy(capacity=3, refill_rate=1 / 300)
-PASSWORD_RESET_POLICY = RateLimitPolicy(capacity=2, refill_rate=1 / 300)
+def _policy_from_settings(limit: int, window_seconds: int) -> RateLimitPolicy:
+    safe_limit = max(1, int(limit))
+    safe_window = max(1, int(window_seconds))
+    return RateLimitPolicy(capacity=safe_limit, refill_rate=safe_limit / safe_window)
+
+
+LOGIN_POLICY = _policy_from_settings(settings.AUTH_LOGIN_RATE_LIMIT, settings.AUTH_LOGIN_WINDOW_SECONDS)
+REGISTRATION_POLICY = RateLimitPolicy(capacity=3, refill_rate=3 / 300)
+PASSWORD_RESET_POLICY = _policy_from_settings(
+    settings.AUTH_PASSWORD_RESET_REQUEST_RATE_LIMIT,
+    settings.AUTH_PASSWORD_RESET_REQUEST_WINDOW_SECONDS,
+)
 OTP_POLICY = RateLimitPolicy(capacity=1, refill_rate=1 / 3600)
-SESSION_POLICY = RateLimitPolicy(capacity=1, refill_rate=1 / 300)
+SESSION_POLICY = _policy_from_settings(settings.AUTH_REFRESH_RATE_LIMIT, settings.AUTH_REFRESH_WINDOW_SECONDS)
+DOWNLOAD_POLICY = RateLimitPolicy(capacity=1, refill_rate=1 / 30)
 
 
 class AbuseProtection:
@@ -54,11 +66,16 @@ class AbuseProtection:
     def _password_reset_key(self, email: str) -> str:
         return f"abuse:password_reset:{self._hash(email)}"
 
+    # TODO: Implement OTP
     def _otp_key(self, email: str) -> str:
         return f"abuse:otp:{self._hash(email)}"
 
     def _session_key(self, ip: str) -> str:
         return f"abuse:session_refresh:{self._hash(ip)}"
+
+    # Download key generation
+    def _download_key(self, ip: str) -> str:
+        return f"abuse:download:{self._hash(ip)}"
 
     async def _allow(self, key: str, policy: RateLimitPolicy) -> bool:
         if self._redis is not None:
@@ -91,6 +108,7 @@ class AbuseProtection:
         return True
 
     async def _allow_redis(self, key: str, policy: RateLimitPolicy) -> bool:
+        """Redis rate limiting implementation."""
         now = time.monotonic()
         data = await self._redis.hgetall(key)
         if not data:
@@ -114,24 +132,35 @@ class AbuseProtection:
         return True
 
     async def guard_login(self, ip: str, username: str) -> None:
+        """Login rate limiter"""
         if not await self._allow(self._login_key(ip, username), LOGIN_POLICY):
             raise TooManyRequestsError("Too many login attempts! Please try again later.")
 
     async def guard_registration(self, ip: str) -> None:
+        """Registration rate limiter"""
         if not await self._allow(self._registration_key(ip), REGISTRATION_POLICY):
             raise TooManyRequestsError("Too many registration attempts! Please try again later.")
 
     async def guard_password_reset(self, email: str) -> None:
+        """Password reset rate limiter"""
         if not await self._allow(self._password_reset_key(email), PASSWORD_RESET_POLICY):
             raise TooManyRequestsError("Too many password reset requests! Try again later.")
 
     async def guard_session_refresh(self, ip: str) -> None:
+        """Session refresh rate limiter"""
         if not await self._allow(self._session_key(ip), SESSION_POLICY):
             raise TooManyRequestsError("Too many session refresh requests! Please try again later.")
 
     async def guard_otp_resend(self, email: str) -> None:
+        """OTP resend rate limiter"""
         if not await self._allow(self._otp_key(email), OTP_POLICY):
             raise TooManyRequestsError("Too many OTP resend requests! Please try again later.")
+
+    async def guard_download(self, ip: str) -> None:
+        """Downloads rate limiter"""
+        if not await self._allow(self._download_key(ip), DOWNLOAD_POLICY):
+            raise TooManyRequestsError("Too many download requests! Please try again later")
+
 
     def _once_key(self, scope: str, identifier: str) -> str:
         return f"abuse.once:{scope}:{self._hash(identifier.lower())}"
