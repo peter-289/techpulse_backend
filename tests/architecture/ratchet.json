@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Known layer-boundary violations that are accepted for now, recorded so",
+    "CI can distinguish 'we already knew about this one' from 'someone just",
+    "introduced a new one'.",
+    "",
+    "tests/architecture/test_layer_boundaries.py compares this file against the",
+    "live import graph with STRICT EQUALITY. It fails in both directions:",
+    "  - a violation present here but no longer in the code  -> remove it",
+    "  - a violation in the code but not present here         -> fix it, do not",
+    "                                                           add it here",
+    "So this file can only shrink. Every entry names the refactor phase that",
+    "removes it; when a phase is merged, delete its entries in the same commit.",
+    "",
+    "See docs/adr/0004-enforce-layer-boundaries-with-a-ratchet.md."
+  ],
+  "R4": {
+    "_phase": "Phase 3 - software_management: return read models, not Pydantic schemas",
+    "violations": [
+      "app/modules/software_management/application/services/software_service.py -> app.modules.software_management.schema.software_schema"
+    ]
+  },
+  "R5": {
+    "_phase": "Phases 4-7 - give each concept a domain model so no service touches an ORM row",
+    "violations": [
+      "app/modules/authentication/auth_service.py -> app.infrastructure.database.models.session",
+      "app/modules/authentication/auth_service.py -> app.infrastructure.database.models.user",
+      "app/modules/resource/resource_service.py -> app.infrastructure.database.models.resource",
+      "app/modules/security/audit_service.py -> app.infrastructure.database.models.audit_event",
+      "app/modules/security/audit_service.py -> app.infrastructure.database.models.security_alert",
+      "app/modules/user/application/services/support_chat_service.py -> app.infrastructure.database.models.chat_message",
+      "app/modules/user/application/services/user_service.py -> app.infrastructure.database.models.user"
+    ]
+  },
+  "R6": {
+    "_phase": "Phase 8 - move the admin query into a security-context repository",
+    "violations": [
+      "app/modules/user/api/router/admin_router.py -> sqlalchemy"
+    ]
+  }
+}

@@ -1,94 +1,47 @@
+"""Persistence mappers between the software_management domain and its ORM models.
+
+Placed in infrastructure, not in ``app/modules/shared``. A mapper depends on
+both the persistence model and the domain entities of exactly one bounded
+context, so the shared kernel has no business importing it -- doing so coupled
+every module to software_management's aggregates. See
+``app/modules/software_management/ARCHITECTURE.md`` section 5.3 and
+``docs/adr/0002-mappers-live-in-infrastructure.md``.
+
+The repository is the only caller. Nothing outside
+``infrastructure/persistence`` should import from this module.
+"""
+
 from __future__ import annotations
 
 from uuid import UUID
-from fastapi import HTTPException, status
 
+from app.infrastructure.database.models.software import (
+    SoftwareArtifactModel,
+    SoftwareModel,
+    SoftwareVersionModel,
+)
+from app.modules.shared.enums import (
+    ArtifactStatus,
+    SoftwareStatus,
+    SoftwareVisibility,
+    VersionStatus,
+)
 from app.modules.software_management.domain.entities.artifact import Artifact
 from app.modules.software_management.domain.entities.software import Software
 from app.modules.software_management.domain.entities.version import Version
-from app.modules.software_management.schema.software_schema import ArtifactResponse, SoftwareRead, SoftwareVersionRead
-from app.modules.shared.enums import ArtifactStatus, VersionStatus, SoftwareStatus, SoftwareVisibility
-from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
-
-from app.modules.software_management.domain.exceptions import SoftwareDomainError, SoftwareAccessDeniedError, SoftwareNotFoundError
 from app.modules.software_management.domain.value_objects import SemVer
-from app.modules.software_management.domain.value_objects.value_objects import Currency, Money
-
-
-def _actor_uuid(user_id: int) -> UUID:
-    try:
-        return UUID(int=max(0, int(user_id)))
-    except Exception:
-        # fallback for non-numeric inputs
-        return UUID(int=0)
-
-
-def _actor_int(user_id: UUID) -> int:
-    return int(user_id.int)
-
-
-def _category(description: str) -> str:
-    for line in (description or "").splitlines(keepends=True):
-        if line.lower().startswith("category:"):
-            return line.split(":", 1)[1].strip().lower() or "others"
-    return "others"
-
-
-def _software_item(software: Software, *, viewer_user_id: UUID) -> SoftwareRead:
-    latest = software.latest_downloadable()
-    return SoftwareRead(
-        id=str(software.id),
-        name=software.name,
-        description=software.description,
-        owner_id=int(software.owner_id.int),
-        is_public=software.visibility.value == "public",
-        price_cents=software.price.amount_cents,
-        currency=software.price.currency.code,
-        viewer_has_access=software.owner_id == viewer_user_id or software.price.amount_cents == 0,
-        category=_category(software.description),
-        latest_version=str(latest.number) if latest else None,
-        download_count=software.download_count,
-        created_at=software.created_at.isoformat(),
-        updated_at=software.updated_at.isoformat(),
-    )
-
-
-def _version_item(version: Version) -> SoftwareVersionRead:
-    """Version read model"""
-    return SoftwareVersionRead(
-        id=version.id,
-        software_id=version.software_id,
-        version=version.number,
-        status=version.status,
-        download_count=version.download_count,
-        release_notes=version.release_notes,
-        created_at=version.created_at,
-        published_at=version.published_at,
-        artifacts=[
-            ArtifactResponse(
-                id=artifact.id,
-                filename=artifact.filename,
-                size_bytes=artifact.size_bytes,
-                sha256=artifact.sha256,
-                content_type=artifact.mime_type,
-                status=artifact.status.value,
-            )
-            for artifact in version.artifacts
-        ],
-    )
-
-
-
-
-def _error(exc: SoftwareDomainError) -> HTTPException:
-    if isinstance(exc, SoftwareAccessDeniedError):
-        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, SoftwareNotFoundError):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+from app.modules.software_management.domain.value_objects.value_objects import (
+    Currency,
+    Money,
+)
 
 
 def _artifact_status(raw: str | None) -> ArtifactStatus:
+    """Coerce a persisted status string to ``ArtifactStatus``.
+
+    Unknown or missing values fall back to ACTIVE so a row written by an older
+    release is still readable.
+    """
     try:
         return ArtifactStatus((raw or ArtifactStatus.ACTIVE.value).lower())
     except ValueError:
@@ -96,13 +49,28 @@ def _artifact_status(raw: str | None) -> ArtifactStatus:
 
 
 def _version_status(raw: str | None) -> VersionStatus:
+    """Coerce a persisted status string to ``VersionStatus``.
+
+    Anything that is not a recognised version status is treated as DRAFT, since
+    treating an unknown value as PUBLISHED would make an unreviewed version
+    downloadable.
+    """
     candidate = (raw or "").lower()
     if candidate:
         try:
             return VersionStatus(candidate)
         except ValueError:
             pass
-    return VersionStatus.PUBLISHED if candidate == VersionStatus.PUBLISHED.value.lower() else VersionStatus.DRAFT
+    return (
+        VersionStatus.PUBLISHED
+        if candidate == VersionStatus.PUBLISHED.value.lower()
+        else VersionStatus.DRAFT
+    )
+
+
+# --------------------------------------------------------------------------
+# ORM model -> domain entity
+# --------------------------------------------------------------------------
 
 
 def _artifact_to_entity(model: SoftwareArtifactModel, version_id: str) -> Artifact:
@@ -137,12 +105,19 @@ def _version_to_entity(model: SoftwareVersionModel) -> Version:
     )
 
 
-def _software_to_entity(model: SoftwareModel) -> Software:
+def software_to_entity(model: SoftwareModel) -> Software:
+    """Rebuild the Software aggregate, with versions and artifacts, from a row."""
     status_value = getattr(model, "status", SoftwareStatus.ACTIVE)
     visibility_value = getattr(model, "visibility", SoftwareVisibility.PUBLIC)
-    status_raw = status_value.value if isinstance(status_value, SoftwareStatus) else str(status_value).lower()
+    status_raw = (
+        status_value.value
+        if isinstance(status_value, SoftwareStatus)
+        else str(status_value).lower()
+    )
     visibility_raw = (
-        visibility_value.value if isinstance(visibility_value, SoftwareVisibility) else str(visibility_value).lower()
+        visibility_value.value
+        if isinstance(visibility_value, SoftwareVisibility)
+        else str(visibility_value).lower()
     )
     return Software(
         id=UUID(model.id),
@@ -152,12 +127,20 @@ def _software_to_entity(model: SoftwareModel) -> Software:
         status=SoftwareStatus(status_raw),
         visibility=SoftwareVisibility(visibility_raw),
         category_id=model.category_id if getattr(model, "category_id", None) else None,
-        price=Money(amount_cents=model.price_cents or 0, currency=Currency(code=model.currency or "USD")),
+        price=Money(
+            amount_cents=model.price_cents or 0,
+            currency=Currency(code=model.currency or "USD"),
+        ),
         versions=[_version_to_entity(item) for item in model.versions],
         created_at=model.created_at,
         updated_at=model.updated_at,
         download_count=model.download_count or 0,
     )
+
+
+# --------------------------------------------------------------------------
+# domain entity -> ORM model
+# --------------------------------------------------------------------------
 
 
 def _artifact_to_model(entity: Artifact) -> SoftwareArtifactModel:
@@ -193,7 +176,8 @@ def _version_to_model(entity: Version) -> SoftwareVersionModel:
     return model
 
 
-def _software_to_model(entity: Software) -> SoftwareModel:
+def software_to_model(entity: Software) -> SoftwareModel:
+    """Project the aggregate onto a detached ORM row for the repository to merge."""
     model = SoftwareModel(
         id=str(entity.id),
         owner_id=str(entity.owner_id),

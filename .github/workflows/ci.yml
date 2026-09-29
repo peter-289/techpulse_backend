@@ -25,6 +25,31 @@ jobs:
       - name: Run test suite
         run: python -m pytest -q
 
+  # DDD layer boundaries. Kept as its own job, and as a separate step from the
+  # test suite, so a boundary regression is reported as an architecture
+  # failure rather than being buried among test failures. The ratchet in
+  # tests/architecture/ratchet.json can only shrink; see
+  # docs/adr/0004-enforce-layer-boundaries-with-a-ratchet.md.
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Report layer-boundary violations
+        run: python -m tests.architecture.layer_rules
+
+      - name: Enforce layer boundaries
+        run: python -m pytest tests/architecture -q
+
   alembic-check:
     runs-on: ubuntu-latest
 

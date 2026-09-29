@@ -14,8 +14,11 @@ from app.modules.software_management.domain.ports.repositories.software_reposito
 from app.modules.software_management.domain.entities.software import Software
 from app.modules.software_management.domain.value_objects import SoftwareCard, OwnedSoftwareCard
 from app.modules.software_management.domain.exceptions import RepositoryUnavailableError, SoftwareNotFoundError
+from app.modules.software_management.infrastructure.persistence.mappers.software_mapper import (
+    software_to_entity,
+    software_to_model,
+)
 from app.infrastructure.database.models.software import SoftwareModel, SoftwareVersionModel
-from app.modules.shared.mappers import _software_to_entity, _software_to_model
 from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
 
 # Logger setup
@@ -41,7 +44,7 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
             model = await self.session.scalar(stmt)
             if model is None:
                 return None
-            return _software_to_entity(model)
+            return software_to_entity(model)
 
         except SQLAlchemyError as e:
             logger.error(f"Error constructing query for get: {e}", exc_info=False)
@@ -55,11 +58,11 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
            RepositoryUnavailableError: On database failure.
          """
         try:
-           model = _software_to_model(software)
+           model = software_to_model(software)
            merged = await self.session.merge(model)
            await self.session.flush()
            await self.session.refresh(merged)
-           return _software_to_entity(merged)
+           return software_to_entity(merged)
         
         except SQLAlchemyError as exc:
            logger.error("Error staging software for save: %s", exc, exc_info=False)
@@ -270,7 +273,7 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
 
             result = await self.session.execute(stmt)
             models = result.scalars().all()
-            return [_software_to_entity(m) for m in models]
+            return [software_to_entity(m) for m in models]
 
         except SQLAlchemyError as exc:
             logger.exception("Failed to search candidates: %s", exc)

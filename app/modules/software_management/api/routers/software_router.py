@@ -26,7 +26,8 @@ from app.modules.software_management.schema.software_schema import (
     SoftwareVersionRead,
 )
 from app.modules.software_management.domain.value_objects import OwnedSoftwareCard, SemVer
-from app.modules.shared.mappers import _software_item, _version_item, _error
+from app.modules.software_management.api.presenters import software_item, version_item
+from app.modules.software_management.api.errors import http_error
 from app.modules.software_management.application.services.software_service import SoftwareService
 from app.modules.software_management.application.services.download_service import DownloadService
 from app.modules.software_management.application.services.search_service import SearchService
@@ -80,7 +81,7 @@ async def upload_software_package(
             artifacts=uploads,
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     finally:
         for uploaded in uploads:
             uploaded.temp_path.unlink(missing_ok=True)
@@ -120,7 +121,7 @@ async def list_versions(
             limit=limit,
             )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     return software
 
 
@@ -147,11 +148,11 @@ async def upload_version(
             is_admin=str(current_user.role).upper() == "ADMIN",
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     finally:
         for uploaded in uploads:
             uploaded.temp_path.unlink(missing_ok=True)
-    return _version_item(created_version)
+    return version_item(created_version)
 
 
 @router.patch("/{software_id}/pricing", response_model=SoftwareRead)
@@ -170,8 +171,8 @@ async def update_pricing(
             is_admin=str(current_user.role).upper() == "ADMIN",
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
-    return _software_item(software, viewer_user_id=current_user.user_id)
+        raise http_error(exc) from exc
+    return software_item(software, viewer_user_id=current_user.user_id)
 
 
 
@@ -191,7 +192,7 @@ async def deprecate_version(
             is_admin=str(current_user.role).upper() == "ADMIN",
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     return {"status": "deprecated", "version": version}
 
 # Revoke a version
@@ -210,7 +211,7 @@ async def revoke_version(
             is_admin=str(current_user.role).upper() == "ADMIN",
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     return {"status": "revoked", "version": version}
 
 
@@ -225,13 +226,13 @@ async def list_version_artifacts(
         software = await service.get(software_id)
         target_version = software.get_version_by_semver(SemVer.parse(version))
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
 
     if not software.is_public() and not software.is_owned_by(current_user.user_id) and not await service.has_purchase(
         software_id=software_id,
         user_id=current_user.user_id,
     ):
-        raise _error(SoftwareDomainError("A purchase is required to view artifacts."))
+        raise http_error(SoftwareDomainError("A purchase is required to view artifacts."))
 
     return [
         ArtifactResponse(
@@ -268,7 +269,7 @@ async def download_artifact(
             user_id=current_user.user_id,
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     return RedirectResponse(url=url.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
@@ -292,7 +293,7 @@ async def download_version(
             user_id=current_user.user_id,
         )
     except SoftwareDomainError as exc:
-        raise _error(exc) from exc
+        raise http_error(exc) from exc
     return RedirectResponse(url=url.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
@@ -332,7 +333,7 @@ async def search(
         raise HTTPException(status_code=503, detail=str(exc))
 
     items = [
-        _software_item(r.software, viewer_user_id=r.software.owner_id)
+        software_item(r.software, viewer_user_id=r.software.owner_id)
         .model_copy(update={"viewer_has_access": r.software.is_public() or r.software.price.amount_cents == 0})
         for r in results
     ]
@@ -349,7 +350,7 @@ async def admin_packages(
 ) -> list[SoftwareRead]:
     user_id = admin.user_id
     items, _ = await service.list_visible(user_id=user_id, limit=limit)
-    return [_software_item(item, viewer_user_id=user_id).model_copy(update={"viewer_has_access": True}) for item in items]
+    return [software_item(item, viewer_user_id=user_id).model_copy(update={"viewer_has_access": True}) for item in items]
 
 
 @router.get("/admin/summary", response_model=SoftwareSummary)
