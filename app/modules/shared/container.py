@@ -1,7 +1,12 @@
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.infrastructure.storage.local_storage import HmacDownloadUrlSigner, LocalStorage
+from app.infrastructure.storage.local_storage import (
+    DownloadUrlSignerSettings,
+    HmacDownloadUrlSigner,
+    LocalStorage,
+    StorageSettings,
+)
 
 
 
@@ -33,22 +38,9 @@ mail_config = MailConfig(
     VALIDATE_CERTS=settings.SMTP_VALIDATE_CERTS,
 )
 
-# STORAGE SETTINGS
-@dataclass(frozen=True, slots=True)
-class StorageSettings:
-    """Storage settings for local storage."""
-    backend_url: str
-    storage_root: str
-    signing_secret: str
-
-# SIGNER SETTINGS
-@dataclass(frozen=True, slots=True)
-class DownloadUrlSignerSettings:
-    backend_url: str
-    download_path: str
-    signing_secret: str
-    default_expiry_seconds: int = 900
-
+# StorageSettings and DownloadUrlSignerSettings live beside the adapter they
+# configure, in app.infrastructure.storage.local_storage, so the adapter's own
+# annotations resolve without importing the composition root.
 storage_settings = StorageSettings(
     backend_url=settings.BACKEND_URL,
     storage_root=settings.UPLOAD_ROOT,

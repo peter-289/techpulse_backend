@@ -103,6 +103,17 @@ class Version:
         self.status = VersionStatus.REVOKED
         self._touch()
 
+    def record_download(self) -> None:
+        """Count a completed download of this version.
+
+        The counter and the optimistic-lock bump are two halves of one fact, so
+        they are set together here. A caller that increments the field and then
+        reaches for ``_touch()`` can forget the second half and leave the row
+        looking unwritten to a concurrent transaction.
+        """
+        self.download_count += 1
+        self._touch()
+
     # === QUERIES ===
     def is_downloadable(self) -> bool:
         """ Check if a version is downloadable."""

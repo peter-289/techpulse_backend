@@ -3,13 +3,15 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 
-from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility, AccessType
+from app.modules.shared.enums import ArtifactStatus, SoftwareStatus, SoftwareVisibility, AccessType
 from app.modules.software_management.domain.exceptions import InvalidStateTransitionError, SoftwareNotFoundError
 from app.modules.software_management.domain.value_objects import SemVer
+from app.modules.software_management.domain.entities.artifact import Artifact
 from app.modules.software_management.domain.entities.version import Version
 from app.modules.software_management.domain.value_objects.value_objects import Currency, Money
 from app.modules.shared.root_aggregate import AggregateRoot
 from app.modules.software_management.domain.events import (
+    ArtifactAddedToVersion,
     SoftwareDownloadedEvent,
     SoftwareAccessPolicyUpdatedEvent,
     SoftwareArchivedEvent,
@@ -283,6 +285,40 @@ class Software(AggregateRoot):
                 version_id=version.id,
                 aggregate_id=self.id,
                 actor_id=self.owner_id,
+            )
+        )
+
+    def add_artifact_to_version(self, *, version: Version, artifact: Artifact) -> None:
+        """Attach an artifact to one of this software's versions.
+
+        Software is the aggregate root, so the fact that a version gained an
+        artifact is recorded here rather than in the service that performs the
+        upload. Attaching through the aggregate is what keeps the event and the
+        state change from coming apart: a service that called
+        ``version.add_artifact`` directly could produce a version with a
+        persisted artifact and no event announcing it, and the reverse.
+
+        The artifact must already have passed its malware scan; the caller
+        verifies that before constructing it.
+        """
+        if artifact.status != ArtifactStatus.ACTIVE:
+            raise InvalidStateTransitionError(
+                "Artifact cannot be attached until its malware scan succeeds."
+            )
+        if version.software_id != self.id:
+            raise InvalidStateTransitionError("Version does not belong to this software.")
+        version.add_artifact(artifact)
+        self._record_event(
+            ArtifactAddedToVersion(
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+                software_id=self.id,
+                version_id=version.id,
+                artifact_id=artifact.id,
+                filename=artifact.filename,
+                storage_key=artifact.storage_key,
+                size_bytes=artifact.size_bytes,
+                sha256=artifact.sha256,
             )
         )
 

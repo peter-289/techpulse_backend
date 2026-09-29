@@ -22,18 +22,6 @@
   "violations": [
     {
       "rule": "R4",
-      "source": "app/modules/software_management/application/services/software_service.py",
-      "import": "app.core.config",
-      "phase": "Phase 3 - read the upload size limit through an injected value object"
-    },
-    {
-      "rule": "R4",
-      "source": "app/modules/software_management/application/services/software_service.py",
-      "import": "app.modules.software_management.schema.software_schema",
-      "phase": "Phase 3 - return a domain read model; the API layer presents it"
-    },
-    {
-      "rule": "R4",
       "source": "app/modules/user/application/services/support_chat_service.py",
       "import": "app.core.config",
       "phase": "Phase 6 - inject the AI provider configuration"
@@ -97,6 +85,42 @@
       "source": "app/modules/user/api/router/admin_router.py",
       "import": "sqlalchemy",
       "phase": "Phase 8 - move the query into a security-context repository"
+    },
+    {
+      "rule": "R8",
+      "source": "app/modules/authentication/auth_service.py",
+      "import": "fastapi.concurrency",
+      "phase": "Phase 7 - use asyncio.to_thread instead of the FastAPI thread pool"
+    },
+    {
+      "rule": "R8",
+      "source": "app/modules/authentication/auth_service.py",
+      "import": "sqlalchemy.exc",
+      "phase": "Phase 7 - let the repository translate SQLAlchemy errors"
+    },
+    {
+      "rule": "R8",
+      "source": "app/modules/user/application/services/support_chat_service.py",
+      "import": "requests",
+      "phase": "Phase 6 - call the AI provider through a port"
+    },
+    {
+      "rule": "R8",
+      "source": "app/modules/user/application/services/user_service.py",
+      "import": "fastapi",
+      "phase": "Phase 6 - return a domain read model; the API layer presents it"
+    },
+    {
+      "rule": "R8",
+      "source": "app/modules/user/application/services/user_service.py",
+      "import": "fastapi.concurrency",
+      "phase": "Phase 6 - use asyncio.to_thread instead of the FastAPI thread pool"
+    },
+    {
+      "rule": "R8",
+      "source": "app/modules/user/application/services/user_service.py",
+      "import": "sqlalchemy.exc",
+      "phase": "Phase 6 - let the repository translate SQLAlchemy errors"
     }
   ]
 }

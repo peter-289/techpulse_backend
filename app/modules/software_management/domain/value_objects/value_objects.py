@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 import re
-from pathlib import Path
 
 from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
 from app.modules.software_management.domain.exceptions import InvalidSemVerError
@@ -63,21 +62,6 @@ class OwnedSoftwareCard:
     created_at: datetime | None = None
    
    
-
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactUpload:
-    """Spool-side upload data for a single artifact."""
-    filename: str
-    content_type: str | None
-    size_bytes: int
-    sha256: str
-    temp_path: Path
-
-
-# Backwards-compatible alias used by existing application code.
-UploadedFile = ArtifactUpload
 
 
 

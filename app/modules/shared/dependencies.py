@@ -31,7 +31,12 @@ from app.modules.security.token_manager import (
     PASSWORD_RESET_TOKEN_TYPE,
 )
 from app.infrastructure.external_apis.scanner_service.malware_scanner import get_malware_scanner, MalwareScanner
-from app.modules.software_management.domain.ports.storage import DownloadUrlSigner, Storage
+from app.infrastructure.events.logging_event_publisher import LoggingDomainEventPublisher
+from app.infrastructure.storage.local_artifact_stager import LocalArtifactStager
+from app.modules.software_management.domain.ports.artifact_stager import ArtifactStager, UploadLimits
+from app.modules.software_management.domain.ports.event_publisher import DomainEventPublisher
+from app.modules.software_management.domain.ports.download_signer import DownloadSigner
+from app.modules.software_management.domain.ports.storage import Storage
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.software_management.application.services.software_service import SoftwareService
 from app.modules.software_management.application.services.download_service import DownloadService
@@ -370,12 +375,19 @@ def get_storage() -> Storage:
     return storage
 
 # === GET HMAC SIGNER ===
-def get_signer() -> DownloadUrlSigner:
+def get_signer() -> DownloadSigner:
     return signer
+
+# === GET DOMAIN EVENT PUBLISHER ===
+event_publisher = LoggingDomainEventPublisher()
+
+
+def get_event_publisher() -> DomainEventPublisher:
+    return event_publisher
 
 # === GET SOFTWARE SERVICE ===
 def get_download_service(
-        signer: DownloadUrlSigner = Depends(get_signer),
+        signer: DownloadSigner = Depends(get_signer),
         unit_of_work: UnitOfWork = Depends(get_unit_of_work),
         storage: Storage = Depends(get_storage),
 ) -> DownloadService:
@@ -388,6 +400,7 @@ def get_software_service(
         malware_scanner: MalwareScanner = Depends(get_scanner),
         unit_of_work: UnitOfWork = Depends(get_unit_of_work),
         category_service: CategoryService = Depends(get_category_service),
+        event_publisher: DomainEventPublisher = Depends(get_event_publisher),
 ) -> SoftwareService:
     return SoftwareService(
         download_service=download_service,
@@ -395,7 +408,23 @@ def get_software_service(
         malware_scanner=malware_scanner,
         unit_of_work=unit_of_work,
         category_service=category_service,
+        event_publisher=event_publisher,
         )
+
+# === GET ARTIFACT STAGER ===
+# The upload limit is resolved here, at the composition root, rather than read
+# out of the environment by the code that enforces it. That is what lets the
+# stager take a UploadLimits value object and keeps app.core out of the
+# application layer.
+upload_limits = UploadLimits(
+    max_size_bytes=settings.PACKAGE_UPLOAD_MAX_SIZE_BYTES,
+)
+
+stager = LocalArtifactStager()
+
+
+def get_artifact_stager() -> ArtifactStager:
+    return stager
 
 
 

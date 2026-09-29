@@ -59,6 +59,20 @@ Each ratcheted rule carries a `_phase` naming the refactor phase that removes
 it, and a test asserts that field is present, so no entry can be added without
 a commitment to remove it.
 
+### Amendment: R8 (Phase 3)
+
+Phase 3 added an eighth rule, R8, rather than widening R4. R4 classifies
+*project* layers, so it sees `app.core` and `app.infrastructure` but is blind to
+installed packages; R5 bans only ORM *models*. Between them, `fastapi.concurrency`,
+`sqlalchemy.exc` and `tempfile` were all reachable from an application service
+with no rule watching. R8 bans a fixed set of framework and filesystem roots
+(`APPLICATION_FORBIDDEN_ROOTS`) in `*_service.py` files.
+
+Adding R8 raised the ratchet count before lowering it, exactly as R2 did in
+Phase 1: it measures an edge the earlier rules never looked at. Six of the
+entries are in the `user` and `authentication` contexts and belong to Phases 6
+and 7; the `software_management` entries it surfaced were fixed in Phase 3.
+
 ## Rationale
 
 **Why a ratchet rather than "fix everything first".** The refactor is
@@ -104,7 +118,10 @@ next to the rule.
 - A new boundary violation fails CI with the exact file and import named.
 - `ratchet.json` is a live, ordered to-do list of remaining architecture debt.
   Its length is a metric: 19 entries once the shared-adapter and ORM-import
-  edges were counted, 13 after Phase 2, 0 at the end.
+  edges were counted, 13 after Phase 2, 17 after Phase 3 (six new R8 entries
+  measuring an edge no earlier rule watched), 0 at the end. A rising count is
+  not regression when it comes from a rule that was previously blind; the
+  R2 row in `docs/REVIEW.md` is the precedent.
 - The rules are executable prose, so they cannot drift from the code the way
   `ARCHITECTURE.md` did. Phase 9 rewrites that document to match reality, and
   these tests are what keep it honest.

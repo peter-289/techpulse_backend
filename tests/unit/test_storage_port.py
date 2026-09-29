@@ -3,7 +3,8 @@
 ``app/infrastructure/storage/local_storage.py`` used to define its own copies of
 the ``Storage`` protocol, the signer protocol and the whole
 ``StorageError`` hierarchy, duplicating the ones in
-``app/modules/software_management/domain/ports/storage.py``.
+``app/modules/software_management/domain/ports/storage.py`` and
+``app/modules/software_management/domain/ports/download_signer.py``.
 
 That duplication was invisible until a service caught the domain exceptions
 while the adapter raised the infrastructure ones: the ``except`` clauses simply
@@ -22,6 +23,7 @@ from app.infrastructure.storage.local_storage import (
     HmacDownloadUrlSigner,
     LocalStorage,
 )
+from app.modules.software_management.domain.ports import download_signer as domain_signer
 from app.modules.software_management.domain.ports import storage as domain_storage
 
 
@@ -45,8 +47,8 @@ def test_storage_protocol_has_a_single_definition() -> None:
 
 
 def test_signer_contract_has_a_single_definition() -> None:
-    assert local_storage.DownloadUrlSigner is domain_storage.DownloadUrlSigner
-    assert local_storage.SignedDownloadUrl is domain_storage.SignedDownloadUrl
+    assert local_storage.DownloadSigner is domain_signer.DownloadSigner
+    assert local_storage.SignedDownloadUrl is domain_signer.SignedDownloadUrl
 
 
 def test_error_handlers_map_the_classes_the_adapter_raises() -> None:
@@ -76,7 +78,7 @@ def test_adapters_satisfy_their_ports(adapter: type) -> None:
     port = (
         domain_storage.Storage
         if adapter is LocalStorage
-        else domain_storage.DownloadUrlSigner
+        else domain_signer.DownloadSigner
     )
     assert all(hasattr(adapter, member) for member in port.__protocol_attrs__)
 
@@ -95,7 +97,7 @@ def test_port_exposes_only_the_documented_members() -> None:
         "delete",
         "exists",
     }
-    assert set(domain_storage.DownloadUrlSigner.__protocol_attrs__) == {
+    assert set(domain_signer.DownloadSigner.__protocol_attrs__) == {
         "create_url",
         "verify_token",
     }

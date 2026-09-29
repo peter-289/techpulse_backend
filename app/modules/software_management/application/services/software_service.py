@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import inspect
 import logging
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from typing import BinaryIO, Sequence
+from typing import Sequence
 from uuid import UUID, uuid4
 
-from app.core.config import settings
 from app.modules.software_management.domain.ports.unit_of_work import SoftwareManagementUnitOfWork
 from app.modules.shared.enums import ArtifactStatus, SoftwareVisibility, VersionStatus
 from app.modules.software_management.application.services.category_service import CategoryService
@@ -17,12 +14,6 @@ from app.modules.software_management.application.services.download_service impor
 from app.modules.software_management.domain.entities.artifact import Artifact
 from app.modules.software_management.domain.entities.software import Software
 from app.modules.software_management.domain.entities.version import Version
-from app.modules.software_management.domain.events.events import (
-    ArtifactAddedToVersion,
-    malware_scan_failed,
-    malware_scan_requested,
-    malware_scan_success,
-)
 from app.modules.software_management.domain.exceptions import (
     DownloadDeniedError,
     InvalidSemVerError,
@@ -30,11 +21,12 @@ from app.modules.software_management.domain.exceptions import (
     SoftwareDomainError,
     SoftwareNotFoundError,
 )
+from app.modules.software_management.domain.ports.artifact_stager import ArtifactUpload
 from app.modules.software_management.domain.ports.download_signer import SignedDownloadUrl
+from app.modules.software_management.domain.ports.event_publisher import DomainEventPublisher
 from app.modules.software_management.domain.ports.malware_scanner import MalwareScanner, ScanResult
 from app.modules.software_management.domain.ports.storage import Storage
-from app.modules.software_management.domain.value_objects import ArtifactUpload, OwnedSoftwareCard, SemVer, UploadedFile
-from app.modules.software_management.schema.software_schema import ArtifactResponse, SoftwareVersionRead
+from app.modules.software_management.domain.value_objects import OwnedSoftwareCard, SemVer
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +42,14 @@ class SoftwareService:
         malware_scanner: MalwareScanner | None = None,
         unit_of_work: SoftwareManagementUnitOfWork | None = None,
         category_service: CategoryService | None = None,
+        event_publisher: DomainEventPublisher | None = None,
     ) -> None:
         self._download_service = download_service
         self._storage = storage
         self._malware_scanner = malware_scanner
         self._uow = unit_of_work
         self._category_service = category_service
+        self._event_publisher = event_publisher
 
     @property
     def repository(self):
@@ -67,60 +61,6 @@ class SoftwareService:
     @repository.setter
     def repository(self, value) -> None:
         self._repository_override = value
-
-    @staticmethod
-    async def spool_file(
-        file: BinaryIO,
-        filename: str,
-        content_type: str | None = None,
-        chunk_size: int = 1024 * 1024,
-        max_size_bytes: int | None = None,
-    ) -> ArtifactUpload:
-        digest = hashlib.sha256()
-        total = 0
-        limit = max_size_bytes or settings.PACKAGE_UPLOAD_MAX_SIZE_BYTES
-        suffix = Path(filename or "package.bin").suffix
-        temp = NamedTemporaryFile(delete=False, suffix=suffix)
-        temp_path = Path(temp.name)
-        try:
-            with temp:
-                while True:
-                    chunk = file.read(chunk_size)
-                    if not chunk:
-                        break
-                    digest.update(chunk)
-                    total += len(chunk)
-                    if total > limit:
-                        raise SoftwareDomainError("Uploaded file exceeds the maximum allowed size.")
-                    temp.write(chunk)
-            return UploadedFile(
-                filename=filename or "package.bin",
-                content_type=content_type,
-                size_bytes=total,
-                sha256=digest.hexdigest(),
-                temp_path=temp_path,
-            )
-        except Exception:
-            temp_path.unlink(missing_ok=True)
-            raise
-
-    @staticmethod
-    async def spool_files(
-        files: Sequence[tuple[BinaryIO, str, str | None]],
-        *,
-        max_size_bytes: int | None = None,
-    ) -> tuple[ArtifactUpload, ...]:
-        uploads: list[ArtifactUpload] = []
-        for file, filename, content_type in files:
-            uploads.append(
-                await SoftwareService.spool_file(
-                    file,
-                    filename,
-                    content_type=content_type,
-                    max_size_bytes=max_size_bytes,
-                )
-            )
-        return tuple(uploads)
 
     async def list_visible(
         self,
@@ -145,37 +85,19 @@ class SoftwareService:
             raise SoftwareNotFoundError("Software not found.")
         return software
 
-    async def list_versions(self, *, software_id: UUID, user_id: UUID, limit: int) -> list[SoftwareVersionRead]:
-        """List all versions of a software."""
+    async def list_versions(self, *, software_id: UUID, user_id: UUID, limit: int) -> list[Version]:
+        """List all versions of a software.
+
+        Returns domain entities; the API layer renders them. Returning the
+        Pydantic read model from here would make the use-case depend on the wire
+        format it happens to be delivered over.
+        """
         async with self._uow.read_only():
             software = await self._uow.software_repo.get(software_id=software_id)
         if software is None:
             raise SoftwareNotFoundError("Software not found.")
 
-        return [
-            SoftwareVersionRead(
-                id=version.id,
-                software_id=version.software_id,
-                version=version.number,
-                status=version.status,
-                download_count=version.download_count,
-                release_notes=version.release_notes,
-                created_at=version.created_at,
-                published_at=version.published_at,
-                artifacts=[
-                    ArtifactResponse(
-                        id=artifact.id,
-                        filename=artifact.filename,
-                        size_bytes=artifact.size_bytes,
-                        sha256=artifact.sha256,
-                        content_type=artifact.mime_type,
-                        status=artifact.status.value,
-                    )
-                    for artifact in version.artifacts
-                ],
-            )
-            for version in software.versions[:limit]
-        ]
+        return list(software.versions[:limit])
 
     async def upload_package(
         self,
@@ -269,7 +191,7 @@ class SoftwareService:
         try:
             for uploaded in artifacts:
                 artifact = await self._process_artifact(version=version, software=software, uploaded=uploaded)
-                version.add_artifact(artifact)
+                software.add_artifact_to_version(version=version, artifact=artifact)
                 saved_storage_keys.append(artifact.storage_key)
 
             software.add_version(version)
@@ -279,7 +201,6 @@ class SoftwareService:
             async with self._uow:
                 await self._uow.software_repo.save(software)
 
-            return software, version
         except Exception:
             for storage_key in saved_storage_keys:
                 try:
@@ -287,6 +208,12 @@ class SoftwareService:
                 except Exception:
                     logger.exception("Failed to clean up stored artifact %s", storage_key)
             raise
+
+        # Dispatch only after the transaction has committed. The aggregate
+        # recorded these facts as they happened, but until the commit lands they
+        # are only true in memory, and a rollback would take them back.
+        await self._dispatch_events(software)
+        return software, version
 
     async def update_pricing(
         self,
@@ -457,33 +384,23 @@ class SoftwareService:
             created_at=version.created_at,
             updated_at=version.updated_at,
         )
-        _ = malware_scan_requested(
-            software_id=software.id,
-            version_id=version.id,
-            artifact_id=artifact.id,
-            storage_key=artifact.storage_key,
-            actor_id=software.owner_id,
-            aggregate_id=software.id,
-        )
-        _ = malware_scan_success(
-            software_id=software.id,
-            version_id=version.id,
-            artifact_id=artifact.id,
-            actor_id=software.owner_id,
-            aggregate_id=software.id,
-        )
-        _ = ArtifactAddedToVersion(
-            actor_id=software.owner_id,
-            aggregate_id=software.id,
-            software_id=software.id,
-            version_id=version.id,
-            artifact_id=artifact.id,
-            filename=artifact.filename,
-            storage_key=artifact.storage_key,
-            size_bytes=artifact.size_bytes,
-            sha256=artifact.sha256,
-        )
         return artifact
+
+    async def _dispatch_events(self, software: Software) -> None:
+        """Hand the aggregate's pending events to the outbound publisher.
+
+        A delivery failure is logged rather than raised: by this point the
+        transaction has committed, so the business operation succeeded. Raising
+        here would report a committed upload as failed, and the caller would
+        retry a change that had already been applied.
+        """
+        events = software.pull_events()
+        if not events or self._event_publisher is None:
+            return
+        try:
+            await self._event_publisher.publish(events)
+        except Exception:
+            logger.exception("Failed to dispatch %d domain event(s)", len(events))
 
     @staticmethod
     def _validate_artifact_upload(*, uploaded: ArtifactUpload, filename: str, content_type: str) -> None:

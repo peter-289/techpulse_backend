@@ -13,6 +13,8 @@ from app.modules.shared.dependencies import (
     get_software_service,
     require_role,
     get_abuse_protection,
+    get_artifact_stager,
+    upload_limits,
 )
 
 from app.modules.software_management.domain.exceptions import SoftwareDomainError
@@ -25,6 +27,7 @@ from app.modules.software_management.schema.software_schema import (
     SoftwareUploadResponse,
     SoftwareVersionRead,
 )
+from app.modules.software_management.domain.ports.artifact_stager import ArtifactStager
 from app.modules.software_management.domain.value_objects import OwnedSoftwareCard, SemVer
 from app.modules.software_management.api.presenters import software_item, version_item
 from app.modules.software_management.api.errors import http_error
@@ -61,11 +64,12 @@ async def upload_software_package(
     price_cents: int = Form(0),
     currency: str = Form("KES"),
     files: list[UploadFile] = File(...),
+    stager: ArtifactStager = Depends(get_artifact_stager),
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> SoftwareUploadResponse:
     uploads = [
-        await service.spool_file(file.file, file.filename or "package.bin", file.content_type)
+        stager.stage(file.file, file.filename or "package.bin", content_type=file.content_type, limits=upload_limits)
         for file in files
     ]
     try:
@@ -84,7 +88,7 @@ async def upload_software_package(
         raise http_error(exc) from exc
     finally:
         for uploaded in uploads:
-            uploaded.temp_path.unlink(missing_ok=True)
+            stager.discard(uploaded)
 
     return SoftwareUploadResponse(
         software_id=str(software.id),
@@ -115,14 +119,14 @@ async def list_versions(
     _current_user: CurrentUser = Depends(get_current_user),
 ):
     try:
-        software = await service.list_versions(
+        versions = await service.list_versions(
             software_id=software_id, 
             user_id=_current_user.user_id,
             limit=limit,
             )
     except SoftwareDomainError as exc:
         raise http_error(exc) from exc
-    return software
+    return [version_item(version) for version in versions]
 
 
 @router.post("/{software_id}/versions/upload", response_model=SoftwareVersionRead, status_code=status.HTTP_201_CREATED)
@@ -131,11 +135,12 @@ async def upload_version(
     version: str = Form(...),
     release_notes: str = Form(""),
     files: list[UploadFile] = File(...),
+    stager: ArtifactStager = Depends(get_artifact_stager),
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> SoftwareVersionRead:
     uploads = [
-        await service.spool_file(file.file, file.filename or "package.bin", file.content_type)
+        stager.stage(file.file, file.filename or "package.bin", content_type=file.content_type, limits=upload_limits)
         for file in files
     ]
     try:
@@ -151,7 +156,7 @@ async def upload_version(
         raise http_error(exc) from exc
     finally:
         for uploaded in uploads:
-            uploaded.temp_path.unlink(missing_ok=True)
+            stager.discard(uploaded)
     return version_item(created_version)
 
 

@@ -7,14 +7,17 @@ import os
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 from typing import BinaryIO
 
-from app.modules.software_management.domain.ports.storage import (
-    DownloadUrlSigner,
+from app.modules.software_management.domain.ports.download_signer import (
+    DownloadSigner,
     SignedDownloadUrl,
+)
+from app.modules.software_management.domain.ports.storage import (
     Storage,
     StorageError,
     StorageFileNotFoundError,
@@ -25,7 +28,7 @@ from app.modules.software_management.domain.ports.storage import (
 )
 
 __all__ = [
-    "DownloadUrlSigner",
+    "DownloadUrlSignerSettings",
     "HmacDownloadUrlSigner",
     "LocalStorage",
     "SignedDownloadUrl",
@@ -34,9 +37,29 @@ __all__ = [
     "StorageFileNotFoundError",
     "StorageReadError",
     "StorageSecurityError",
+    "StorageSettings",
     "StorageUnavailableError",
     "StorageWriteError",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class StorageSettings:
+    """Configuration for the local-filesystem storage adapter."""
+
+    backend_url: str
+    storage_root: str
+    signing_secret: str
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadUrlSignerSettings:
+    """Configuration for the HMAC download-URL signer."""
+
+    backend_url: str
+    download_path: str
+    signing_secret: str
+    default_expiry_seconds: int = 900
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +131,9 @@ def _validate_storage_key(storage_key: str) -> str:
     return normalized
 
 
-class HmacDownloadUrlSigner(DownloadUrlSigner):
-    """This implementation of DownloadUrlSigner uses HMAC to sign and verify download URLs."""
-    def __init__(self, settings: DownloadUrlSignerSettings) -> None: #type: ignore
+class HmacDownloadUrlSigner(DownloadSigner):
+    """Signs and verifies download URLs with HMAC-SHA256."""
+    def __init__(self, settings: DownloadUrlSignerSettings) -> None:
 
         self._settings = settings
     
@@ -306,7 +329,7 @@ class LocalStorage(Storage):
 
     __slots__ = ("_settings",)
 
-    def __init__(self, *, settings: StorageSettings) -> None: #type: ignore
+    def __init__(self, *, settings: StorageSettings) -> None:
         """Initialize the storage adapter.
 
         Args:

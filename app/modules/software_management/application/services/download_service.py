@@ -1,11 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import BinaryIO
 from uuid import UUID
-
-from fastapi.concurrency import run_in_threadpool
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.exceptions.exceptions import ExternalServiceError
 from app.modules.software_management.domain.ports.unit_of_work import SoftwareManagementUnitOfWork
@@ -19,7 +17,6 @@ from app.modules.software_management.domain.entities.artifact import Artifact
 
 from app.modules.software_management.domain.exceptions import (
     ArtifactNotFoundError,
-    RepositoryUnavailableError,
     SoftwareAccessDeniedError,
     SoftwareNotFoundError,
     VersionNotDownloadableError,
@@ -102,31 +99,31 @@ class DownloadService:
         return True
 
     async def record_download(self, *, software_id: UUID, version_id: UUID | None = None) -> None:
-        try:
-            async with self._uow:
-                software = await self._uow.software_repo.get(software_id)
-                if software is None:
-                    raise SoftwareNotFoundError(f"Software {software_id} not found.")
+        # No try/except around this transaction. The repository already maps
+        # SQLAlchemyError onto RepositoryUnavailableError, so a handler here
+        # would be a second place to forget that mapping and a lint against the
+        # rule the repositories are supposed to own.
+        async with self._uow:
+            software = await self._uow.software_repo.get(software_id)
+            if software is None:
+                raise SoftwareNotFoundError(f"Software {software_id} not found.")
 
-                software.increment_download_count()
-                if version_id is not None:
-                    try:
-                        version = software.get_version(version_id)
-                    except SoftwareNotFoundError:
-                        version = None
-                    if version is not None:
-                        version.download_count += 1
-                        version._touch()
+            software.increment_download_count()
+            if version_id is not None:
+                try:
+                    version = software.get_version(version_id)
+                except SoftwareNotFoundError:
+                    version = None
+                if version is not None:
+                    version.record_download()
 
-                await self._uow.software_repo.save(software)
-        except SQLAlchemyError as exc:
-            raise RepositoryUnavailableError("Failed to record software download.") from exc
+            await self._uow.software_repo.save(software)
 
         logger.info("download_recorded software=%s version=%s", software_id, version_id)
 
     async def read_file(self, *, storage_key: str) -> BinaryIO:
         try:
-            file_handle = await run_in_threadpool(self._storage.open, storage_key=storage_key)
+            file_handle = await asyncio.to_thread(self._storage.open, storage_key=storage_key)
         except StorageFileNotFoundError as exc:
             raise ArtifactNotFoundError("Stored artifact not found.") from exc
         except StorageSecurityError as exc:

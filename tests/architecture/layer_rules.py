@@ -79,6 +79,33 @@ OUTWARD_LAYERS = frozenset({"api", "schema", "infrastructure", "<outward>"})
 #: for rules that are about services specifically rather than about a directory.
 SERVICE_SUFFIXES = ("_service.py",)
 
+#: Third-party and standard-library packages an application service may not
+#: import. ARCHITECTURE.md 3.3 is explicit: "Must never import SQLAlchemy
+#: models, FastAPI types, or filesystem APIs."
+#:
+#: R4 cannot catch these. It flags outward *layers* (``app.core``,
+#: ``app.infrastructure``), but ``fastapi.concurrency`` and ``sqlalchemy.exc``
+#: are installed top-level packages that no rule looked at, so a service could
+#: reach for the web framework, the ORM, or the filesystem and still pass every
+#: other rule. R5 covers ORM *models* only, so ``sqlalchemy.exc`` slips past it
+#: too.
+#:
+#: The last two entries are the filesystem *mutators*. Reading a ``Path`` the
+#: caller already holds is fine and is left to R7's sibling concerns; creating,
+#: moving, or deleting files in a use-case is not, and belongs behind a port.
+#: ``os``/``shutil`` are listed because the same reasoning applies to them.
+APPLICATION_FORBIDDEN_ROOTS = frozenset(
+    {
+        "fastapi",
+        "starlette",
+        "sqlalchemy",
+        "requests",
+        "httpx",
+        "tempfile",
+        "shutil",
+    }
+)
+
 #: Top-level packages under ``app/`` that are shared across bounded contexts,
 #: mapped to how the layer rules must treat them.
 #:
@@ -441,6 +468,41 @@ def rule_api_does_not_import_another_modules_api() -> Rule:
     )
 
 
+def rule_application_is_framework_free() -> Rule:
+    """R8: an application service must not import the framework or the filesystem.
+
+    ARCHITECTURE.md 3.3: "Application ... Must never import SQLAlchemy models,
+    FastAPI types, or filesystem APIs."
+
+    This is the rule that R4 and R5 leave a hole in. R4 classifies *project*
+    layers, so it sees ``app.core`` and ``app.infrastructure`` but is blind to
+    installed packages; R5 only bans ORM models, not the ORM's exception types.
+    A service could therefore call ``run_in_threadpool``, catch
+    ``SQLAlchemyError``, or spool a file to ``tempfile`` and still pass both.
+
+    The two behaviours are the same sin in different costumes. Reaching for
+    FastAPI ties the use-case to the web transport; reaching for SQLAlchemy
+    ties it to a persistence choice the repository already encapsulates;
+    reaching for the filesystem puts I/O in the transaction boundary, where it
+    cannot be rolled back.
+
+    Ratcheted. Remaining violations belong to the user context.
+    """
+    violations = []
+    for path in _python_files():
+        if not path.name.endswith(SERVICE_SUFFIXES):
+            continue
+        for target in _parse_imports(path):
+            if target.split(".", 1)[0] in APPLICATION_FORBIDDEN_ROOTS:
+                violations.append(Violation("R8", _rel(path), target))
+    return Rule(
+        "R8",
+        "an application service must not import the web framework, the ORM, or the filesystem",
+        None,
+        tuple(violations),
+    )
+
+
 def _python_files() -> list[Path]:
     return sorted(APP_ROOT.rglob("*.py"))
 
@@ -457,6 +519,7 @@ ALL_RULES = (
     rule_services_do_not_use_orm_models,
     rule_routers_do_not_build_queries,
     rule_api_does_not_import_another_modules_api,
+    rule_application_is_framework_free,
 )
 
 

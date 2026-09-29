@@ -57,10 +57,13 @@ infrastructure depend on them.
   time. A protocol is structural, so a repository missing from the class is not
   a type error at the injection point; it is an `AttributeError` on the first
   request that touches it. The check turns that into a startup failure.
-- The storage contract, the signer contract and the storage exception
-  hierarchy live only in `domain/ports/storage.py`. `local_storage.py` imports
-  them and re-exports the names it previously defined, so existing importers
-  keep working while resolving to a single class object.
+- The storage contract and the storage exception hierarchy live only in
+  `domain/ports/storage.py`. The signer contract lives in the pre-existing
+  `domain/ports/download_signer.py`; Phase 3 corrected an interim decision
+  recorded here that had duplicated it into `storage.py` as well.
+  `local_storage.py` imports them and re-exports the names it previously
+  defined, so existing importers keep working while resolving to a single class
+  object.
 - `app/exceptions/handlers.py` imports the storage exceptions from the domain
   port rather than from the adapter, so the HTTP mapping is keyed to the classes
   adapters actually raise.
@@ -85,8 +88,10 @@ infrastructure depend on them.
   now a wiring change.
 - The global `UnitOfWork` is still one class, and infrastructure still imports
   all five ports. That is a deliberate transitional state, recorded in ADR 0001.
-  Splitting it per context is Phase 3 work. The boundary that matters for
-  application code is already in place.
+  Splitting it per context is not scheduled: the boundary that matters for
+  application code is already in place, and splitting the adapter is
+  infrastructure work that no application code is waiting on. Revisit in Phase 9
+  if the god object is still a problem once the contexts have real domain models.
 - Four `domain/ports/unit_of_work.py` files annotate their repositories as
   `object` because those contexts have no domain model yet. `isinstance` still
   checks structure, so conformance is real; the annotations narrow in Phases 4

@@ -50,5 +50,4 @@ collect_ignore = [
     "unit/test_payment_gateway_registry.py",
     "unit/test_payment_service.py",
     "unit/test_software_access_policy.py",
-    "unit/test_upload_limits.py",
 ]

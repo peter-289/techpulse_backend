@@ -49,6 +49,10 @@ from app.modules.software_management.domain.ports.storage import (
     StorageFileNotFoundError,
     StorageSecurityError,
 )
+from app.modules.software_management.domain.ports.artifact_stager import (
+    StagingError,
+    StagingTooLargeError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +212,17 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StorageError)
     async def _storage_error_handler(_request: Request, exc: StorageError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    # Staging failures get the same codes the equivalent domain errors produced
+    # before the staging port existed, so an oversized or unstageable upload
+    # keeps returning the status the API contract already promised.
+    @app.exception_handler(StagingTooLargeError)
+    async def _staging_too_large_handler(_request: Request, exc: StagingTooLargeError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+    @app.exception_handler(StagingError)
+    async def _staging_error_handler(_request: Request, exc: StagingError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
 
     @app.exception_handler(Exception)

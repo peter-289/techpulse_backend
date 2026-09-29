@@ -18,8 +18,8 @@ shape, that is called out explicitly as a breaking change and justified.
 |---|---|---|---|---|
 | 0 | Baseline commit; dependency and artefact hygiene | 117 pass, 2 pre-existing fail | — | merged |
 | 1 | Layer boundary enforcement; mapper/presenter split | 128 pass, 2 pre-existing fail | 0001, 0002, 0004 | merged |
-| 2 | `UnitOfWork` port; storage port consolidation | 148 pass, 2 pre-existing fail | 0001, 0003, 0004 | **in progress** |
-| 3 | `software_management` into line with its own rules | — | — | pending |
+| 2 | `UnitOfWork` port; storage port consolidation | 150 pass, 2 pre-existing fail | 0001, 0003, 0004 | merged |
+| 3 | `software_management` into line with its own rules | 165 pass, 2 pre-existing fail | 0001, 0004, 0005 | merged |
 | 4 | `security` domain model | — | — | pending |
 | 5 | `resource` domain model | — | — | pending |
 | 6 | `user` domain model | — | — | pending |
@@ -248,3 +248,164 @@ the gate does not catch:
   actually occurred in `admin_router.py`.
 - **R1, R3 and R7 pass today only because the code happens to be correct.**
   They are tripwires, not proof. R1 in particular has never fired.
+
+---
+
+## Phase 2 — The `UnitOfWork` and storage ports
+
+### Why
+
+Eight application services imported the single concrete
+`app/infrastructure/database/unit_of_work.py`, and
+`local_storage.py` defined its own `Storage` protocol, its own signer protocol
+and its own six-class `StorageError` hierarchy next to the domain's.
+
+The duplicate exception hierarchy was not tidiness. When `download_service` was
+pointed at the domain exceptions, every `except StorageFileNotFoundError` in it
+went dead: the adapter raised the *infrastructure* class, which is not a
+subclass of the domain one. A missing artifact would have escaped its handler
+and surfaced as a 500 from an unrelated frame.
+
+### What moved
+
+- `app/modules/shared/unit_of_work.py` holds the transaction contract; each
+  context declares its own port listing only its own repositories. Ports are
+  `Protocol`s, so one concrete adapter satisfies all five, and it asserts
+  conformance to them at import time — a protocol is structural, so a missing
+  repository is otherwise an `AttributeError` on the first request that needs
+  it.
+- The storage contract and exception hierarchy consolidate into
+  `domain/ports/storage.py`.
+- R2 is refined, not relaxed: `app/infrastructure/**` and
+  `app/modules/shared/**` may import another context's `domain.ports` and
+  nothing else.
+
+### Result
+
+R4 11 -> 5, ratchet 19 -> 13, route table unchanged. `tests/unit/test_storage_port.py`
+asserts the adapter's exception names *are* the domain's, by identity, so the
+split cannot come back silently. Full record in `docs/adr/0003`.
+
+### Behaviour is unchanged
+
+| | Before | After |
+|---|---|---|
+| Tests | 128 pass, 2 pre-existing fail | 150 pass, 2 pre-existing fail |
+| HTTP API | — | identical; route table hash unchanged |
+| DB schema | — | identical; no migration |
+
+### Carried into Phase 3
+
+ADR 0003 put `SignedDownloadUrl` and `DownloadUrlSigner` into
+`domain/ports/storage.py` without noticing that `domain/ports/download_signer.py`
+already existed. Services imported one pair and the storage adapter the other —
+the same class-shape split the ADR had just been written to eliminate, one
+directory over. `local_storage.py` also annotated `StorageSettings` and
+`DownloadUrlSignerSettings` without importing them, so those annotations would
+have raised on `get_type_hints`. Both were corrected in Phase 3.
+
+---
+
+## Phase 3 — `software_management` into line with its own rules
+
+### Why
+
+`ARCHITECTURE.md` §3.3 says the application layer "must never import SQLAlchemy
+models, FastAPI types, or filesystem APIs". `SoftwareService` imported
+`tempfile` and `app.core.config`; `DownloadService` imported
+`fastapi.concurrency` and `sqlalchemy.exc`. Phase 1's gate had not caught any of
+it, which turned out to be a hole in the gate rather than a clean bill.
+
+### The gate had a hole (R8)
+
+R4 classifies *project* layers — it sees `app.core`, `app.infrastructure` — but
+`fastapi`, `sqlalchemy` and `tempfile` are installed packages that no rule
+looked at. R5 banned ORM *models* only, so `sqlalchemy.exc` walked past it.
+
+R8 bans a fixed set of framework and filesystem roots in `*_service.py` files.
+Adding it **raised** the ratchet before lowering it, the same way R2 did in
+Phase 1: it measures an edge the earlier rules never watched. Of the nine
+violations it found, three were `software_management` and six were `user` and
+`authentication` — now owned by Phases 6 and 7.
+
+### What moved
+
+| Was | Now | Layer |
+|---|---|---|
+| `SoftwareService.spool_file` (tempfile + hashlib) | `ArtifactStager` port / `LocalArtifactStager` | domain / infrastructure |
+| `settings.PACKAGE_UPLOAD_MAX_SIZE_BYTES` read in the service | `UploadLimits` value object, built at the composition root | domain / shared |
+| `uploaded.temp_path.unlink()` in two routers | `stager.discard()` | infrastructure |
+| `list_versions` returning `SoftwareVersionRead` | returns `list[Version]`; `version_item()` presents | domain / api |
+| `version.download_count += 1; version._touch()` | `Version.record_download()` | domain |
+| `run_in_threadpool` | `asyncio.to_thread` | stdlib |
+| `except SQLAlchemyError` in `record_download` | deleted; the repository already raises `RepositoryUnavailableError` | — |
+| 3 events built and assigned to `_` | recorded by the aggregate, dispatched after commit | domain / application |
+| duplicate signer contracts | one definition in `download_signer.py` | domain |
+
+### The events
+
+`SoftwareService` was constructing a `MalwareScanRequestedEvent`, a
+`MalwareScanSuccessEvent` and an `ArtifactAddedToVersion` per upload and
+assigning each to `_`. `pull_events()` had no callers in the codebase. The
+`MalwareScanRequestedEvent` was built *after* the synchronous scan had already
+finished, so it announced a request that was already history.
+
+Now `Software.add_artifact_to_version()` attaches the artifact and records the
+event together, and the service dispatches to a `DomainEventPublisher` after the
+transaction commits — never before, since a rollback would take the facts back.
+The adapter is a logger, so no notification behaviour changed; it is the seam a
+queue or webhook would be added behind.
+
+The two `MalwareScan*` events were deleted rather than wired. The scan is
+synchronous, so there is no outstanding request to announce, and a failed scan
+aborts the transaction before anything commits, so there is no durable fact for a
+failure event to describe. They become meaningful if the scan is ever made
+asynchronous.
+
+### Behaviour is unchanged
+
+| | Before | After |
+|---|---|---|
+| Tests | 150 pass, 2 pre-existing fail | 165 pass, 2 pre-existing fail |
+| HTTP API | — | identical; route table hash identical at HEAD |
+| `list_versions` body | — | same `SoftwareVersionRead` payload |
+| Oversized upload | 400 | 400 — `StagingTooLargeError` mapped in `handlers.py` |
+| DB schema | — | identical; no migration |
+
+Route table verified by re-computing it from a clean `git worktree` at HEAD and
+from the working tree: 54 method+path entries, same SHA-256.
+
+The 15 new passes are the R8 rule (1), the revived `test_upload_limits.py` (6),
+`test_software_aggregate_events.py` (4) and `test_software_upload_path.py` (4).
+
+`test_software_upload_path.py` exists because `SoftwareService._process_artifact`
+had no test at all. While removing `spool_file` this phase dropped a `pathlib`
+import that `_sanitize_filename` still needed, and the suite stayed green —
+the next real upload would have failed with `NameError`. The new tests exercise
+that path; verified by deleting the import again and watching four tests fail.
+
+### Left alone deliberately
+
+**`SoftwareAccessPolicy` is still unused.** `ensure_can_download` requires
+`version.status == PUBLISHED`, but the live path uses
+`Version.is_downloadable()`, which also accepts `DEPRECATED`; it also requires
+`software.is_public()` even for a buyer, which the live path does not. It
+additionally takes a parameter named `owns_software` that any caller would have
+to pass `has_purchase` into, so a purchasing-but-not-owning user hits "Only
+active owners may download". Adopting it would be a behaviour change wearing a
+cleanup's clothes, so it waits for the phase that brings download tests with it.
+
+**The download access check is still in three places.** `SoftwareService.
+download_url` and `.download_artifact_url` each repeat the same two-line
+purchase/ownership/visibility test, and `DownloadService.create_download_url`
+repeats a third, slightly different copy that checks visibility but not
+`requires_payment()`. Collapsing them would mean picking one behaviour, which
+is a decision about the API rather than about layer boundaries. Flagged, not
+normalised.
+
+**`SoftwareAccessPolicy` is also defined twice** — in
+`domain/policies/software_access_policy.py` and again in
+`policies/software_access_policy.py`, byte-identical apart from a trailing
+newline. The same class-shape duplication ADR 0003 addressed for the storage
+exceptions, but here no code imports either copy, so nothing is broken yet.
+Worth folding in when the policy is adopted.
