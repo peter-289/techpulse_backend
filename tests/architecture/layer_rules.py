@@ -69,9 +69,33 @@ QUERY_BUILDING_SQLALCHEMY = frozenset(
     }
 )
 
+#: Layer values that count as "outward": importing these from an inner layer is
+#: a boundary violation. ``<outward>`` covers the shared adapter packages
+#: (``app.infrastructure``, ``app.core``) which have no feature-module layer of
+#: their own but are equally forbidden.
+OUTWARD_LAYERS = frozenset({"api", "schema", "infrastructure", "<outward>"})
+
 #: Suffixes that mark a file as belonging to the application (use-case) layer
 #: for rules that are about services specifically rather than about a directory.
 SERVICE_SUFFIXES = ("_service.py",)
+
+#: Top-level packages under ``app/`` that are shared across bounded contexts,
+#: mapped to how the layer rules must treat them.
+#:
+#: ``app.infrastructure`` and ``app.core`` are adapters. They read the
+#: environment, own the ORM and wire concrete implementations, so a domain or
+#: application module importing them is the same mistake as importing a
+#: feature module's infrastructure directory, just harder to see because the
+#: path contains no ``modules`` segment.
+#:
+#: ``app.exceptions`` is the shared kernel: ``DomainError`` is a genuine
+#: cross-cutting domain concept that every context's exceptions derive from,
+#: so domain and application are allowed to import it.
+TOP_LEVEL_SHARED: dict[str, str] = {
+    "app.infrastructure": "<outward>",
+    "app.core": "<outward>",
+    "app.exceptions": "<kernel>",
+}
 
 #: Files that are allowed to import another module's domain layer, with the
 #: reason. These are deliberate cross-context bridges, not oversights, so they
@@ -147,15 +171,25 @@ class Violation:
 
 
 def _import_layer(target: str) -> tuple[str | None, str | None]:
-    """Split a dotted import into ``(feature_module, layer)``.
+    """Classify a dotted import as ``(feature_module, layer)``.
 
-    ``app.modules.user.domain.entities.user`` -> ``("user", "domain")``.
-    Returns ``(None, None)`` when the import is not a layered feature module,
-    which is the case for ``app.core`` and ``app.exceptions``.
+    Layer values:
+
+    - a member of :data:`LAYERS` when the import targets a feature module's
+      layer, e.g. ``app.modules.user.domain.entities`` ->
+      ``("user", "domain")``;
+    - ``"<outward>"`` for ``app.infrastructure`` and ``app.core``, which are
+      shared adapters that inner layers must not reach;
+    - ``"<kernel>"`` for ``app.exceptions``, the shared exception kernel;
+    - ``None`` for anything else, which the callers ignore.
     """
     parts = target.split(".")
     if "modules" not in parts:
+        for prefix, layer in TOP_LEVEL_SHARED.items():
+            if target == prefix or target.startswith(prefix + "."):
+                return None, layer
         return None, None
+
     index = parts.index("modules")
     if index + 2 >= len(parts):
         return None, None
@@ -245,7 +279,7 @@ def rule_domain_does_not_import_infrastructure() -> Rule:
             continue
         for target in _parse_imports(path):
             _, layer = _import_layer(target)
-            if layer == "infrastructure":
+            if layer in {"infrastructure", "<outward>"}:
                 violations.append(Violation("R3", _rel(path), target))
     return Rule(
         "R3",
@@ -261,8 +295,14 @@ def rule_application_depends_only_inward() -> Rule:
     ARCHITECTURE.md 3.3: "Application ... Must never import SQLAlchemy models,
     FastAPI types, or filesystem APIs."
 
-    Ratcheted. One known violation: SoftwareService returns a Pydantic
-    response model.
+    "Infrastructure" here includes the shared adapter packages
+    ``app.infrastructure`` and ``app.core``, not just a feature module's
+    ``infrastructure/`` directory. In practice the dominant case is an
+    application service importing the concrete ``UnitOfWork``, which lives in
+    ``app.infrastructure.database``. Phase 2 moves those onto per-module domain
+    ports.
+
+    Ratcheted. Known violations are recorded in ``ratchet.json``.
     """
     violations = []
     for path in _python_files():
@@ -270,7 +310,7 @@ def rule_application_depends_only_inward() -> Rule:
             continue
         for target in _parse_imports(path):
             _, layer = _import_layer(target)
-            if layer in {"api", "schema", "infrastructure"}:
+            if layer in OUTWARD_LAYERS:
                 violations.append(Violation("R4", _rel(path), target))
     return Rule(
         "R4",
@@ -379,32 +419,74 @@ def collect() -> list[Rule]:
     return [factory() for factory in ALL_RULES]
 
 
-def load_ratchet(path: Path) -> dict[str, dict[str, object]]:
+@dataclass(frozen=True, slots=True)
+class RatchetEntry:
+    """One accepted, known violation plus the phase that is meant to remove it."""
+
+    rule_id: str
+    key: str
+    phase: str
+
+    @property
+    def source(self) -> str:
+        return self.key.split(" -> ", 1)[0]
+
+    @property
+    def target(self) -> str:
+        return self.key.split(" -> ", 1)[-1]
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "rule": self.rule_id,
+            "source": self.source,
+            "import": self.target,
+            "phase": self.phase,
+        }
+
+
+def load_ratchet(path: Path) -> dict[str, RatchetEntry]:
     """Load the checked-in allowlist of accepted, known violations.
 
-    Returns a mapping of ``rule_id -> {"_phase": str, "violations": [...]}``.
-    Top-level keys starting with ``_`` are documentation (see ``_comment`` in
-    the file) and are dropped, so the file can explain itself inline.
+    The on-disk format is a flat list of ``{rule, source, import, phase}``
+    objects under a ``violations`` key, rather than a map keyed by rule. A flat
+    list keeps each entry self-describing: when one rule's violations are
+    cleared by three different phases, the remaining entries still say which
+    phase owns them.
+
+    Returns a mapping of ``rule_id -> {violation key -> entry}``.
     """
     if not path.exists():
         return {}
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return {key: value for key, value in raw.items() if not key.startswith("_")}
+
+    by_rule: dict[str, dict[str, RatchetEntry]] = {}
+    for item in raw.get("violations", []):
+        entry = RatchetEntry(
+            rule_id=item["rule"],
+            key=f"{item['source']} -> {item['import']}",
+            phase=item["phase"],
+        )
+        by_rule.setdefault(entry.rule_id, {})[entry.key] = entry
+    return by_rule
 
 
-def allowed_violations(ratchet: dict[str, dict[str, object]], rule_id: str) -> set[str] | None:
+def allowed_violations(
+    ratchet: dict[str, dict[str, RatchetEntry]], rule_id: str
+) -> set[str] | None:
     """Return the allowlisted keys for a rule, or ``None`` for a hard rule.
 
     ``None`` means the rule is hard: it must have zero violations and must not
     appear in the ratchet at all.
     """
-    entry = ratchet.get(rule_id)
-    if entry is None:
+    entries = ratchet.get(rule_id)
+    if entries is None:
         return None
-    return set(entry.get("violations", []))
+    return set(entries)
 
 
-def compare(rule: Rule, ratchet: dict[str, dict[str, object]]) -> tuple[set[str], set[str], bool]:
+def compare(
+    rule: Rule, ratchet: dict[str, dict[str, RatchetEntry]]
+) -> tuple[set[str], set[str], bool]:
     """Compare a rule against the ratchet.
 
     Returns ``(new, stale, is_hard)``:

@@ -6,36 +6,134 @@
     "",
     "tests/architecture/test_layer_boundaries.py compares this file against the",
     "live import graph with STRICT EQUALITY. It fails in both directions:",
-    "  - a violation present here but no longer in the code  -> remove it",
-    "  - a violation in the code but not present here         -> fix it, do not",
+    "  - a violation present here but no longer in the code  -> delete the entry",
+    "  - a violation in the code but not present here         -> fix it; do NOT",
     "                                                           add it here",
+    "",
     "So this file can only shrink. Every entry names the refactor phase that",
-    "removes it; when a phase is merged, delete its entries in the same commit.",
+    "removes it in its 'phase' field; when a phase is merged, delete its",
+    "entries in the same commit.",
+    "",
+    "The list is kept sorted by (rule, source, import) so diffs stay readable.",
+    "A test enforces that.",
     "",
     "See docs/adr/0004-enforce-layer-boundaries-with-a-ratchet.md."
   ],
-  "R4": {
-    "_phase": "Phase 3 - software_management: return read models, not Pydantic schemas",
-    "violations": [
-      "app/modules/software_management/application/services/software_service.py -> app.modules.software_management.schema.software_schema"
-    ]
-  },
-  "R5": {
-    "_phase": "Phases 4-7 - give each concept a domain model so no service touches an ORM row",
-    "violations": [
-      "app/modules/authentication/auth_service.py -> app.infrastructure.database.models.session",
-      "app/modules/authentication/auth_service.py -> app.infrastructure.database.models.user",
-      "app/modules/resource/resource_service.py -> app.infrastructure.database.models.resource",
-      "app/modules/security/audit_service.py -> app.infrastructure.database.models.audit_event",
-      "app/modules/security/audit_service.py -> app.infrastructure.database.models.security_alert",
-      "app/modules/user/application/services/support_chat_service.py -> app.infrastructure.database.models.chat_message",
-      "app/modules/user/application/services/user_service.py -> app.infrastructure.database.models.user"
-    ]
-  },
-  "R6": {
-    "_phase": "Phase 8 - move the admin query into a security-context repository",
-    "violations": [
-      "app/modules/user/api/router/admin_router.py -> sqlalchemy"
-    ]
-  }
+
+  "violations": [
+    {
+      "rule": "R4",
+      "source": "app/modules/software_management/application/services/category_service.py",
+      "import": "app.infrastructure.database.unit_of_work",
+      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/software_management/application/services/download_service.py",
+      "import": "app.infrastructure.database.unit_of_work",
+      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/software_management/application/services/download_service.py",
+      "import": "app.infrastructure.storage.local_storage",
+      "phase": "Phase 2 - import the Storage port from domain, not the local adapter"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/software_management/application/services/software_service.py",
+      "import": "app.core.config",
+      "phase": "Phase 3 - read the upload size limit through an injected value object"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/software_management/application/services/software_service.py",
+      "import": "app.infrastructure.database.unit_of_work",
+      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/software_management/application/services/software_service.py",
+      "import": "app.modules.software_management.schema.software_schema",
+      "phase": "Phase 3 - return a domain read model; the API layer presents it"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/user/application/services/support_chat_service.py",
+      "import": "app.core.config",
+      "phase": "Phase 6 - inject the AI provider configuration"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/user/application/services/support_chat_service.py",
+      "import": "app.infrastructure.database.models.chat_message",
+      "phase": "Phase 6 - introduce a ChatMessage entity"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/user/application/services/support_chat_service.py",
+      "import": "app.infrastructure.database.unit_of_work",
+      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/user/application/services/user_service.py",
+      "import": "app.infrastructure.database.models.user",
+      "phase": "Phase 6 - introduce a User aggregate"
+    },
+    {
+      "rule": "R4",
+      "source": "app/modules/user/application/services/user_service.py",
+      "import": "app.infrastructure.database.unit_of_work",
+      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/authentication/auth_service.py",
+      "import": "app.infrastructure.database.models.session",
+      "phase": "Phase 7 - introduce a UserSession domain model"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/authentication/auth_service.py",
+      "import": "app.infrastructure.database.models.user",
+      "phase": "Phase 7 - consume the User aggregate from the user context's port"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/resource/resource_service.py",
+      "import": "app.infrastructure.database.models.resource",
+      "phase": "Phase 5 - introduce a Resource aggregate"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/security/audit_service.py",
+      "import": "app.infrastructure.database.models.audit_event",
+      "phase": "Phase 4 - introduce an AuditEvent domain model"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/security/audit_service.py",
+      "import": "app.infrastructure.database.models.security_alert",
+      "phase": "Phase 4 - introduce a SecurityAlert aggregate"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/user/application/services/support_chat_service.py",
+      "import": "app.infrastructure.database.models.chat_message",
+      "phase": "Phase 6 - introduce a ChatMessage entity"
+    },
+    {
+      "rule": "R5",
+      "source": "app/modules/user/application/services/user_service.py",
+      "import": "app.infrastructure.database.models.user",
+      "phase": "Phase 6 - introduce a User aggregate"
+    },
+    {
+      "rule": "R6",
+      "source": "app/modules/user/api/router/admin_router.py",
+      "import": "sqlalchemy",
+      "phase": "Phase 8 - move the query into a security-context repository"
+    }
+  ]
 }
