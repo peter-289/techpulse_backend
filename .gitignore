@@ -20,6 +20,12 @@ __pycache__
 db.sqlite3
 .db
 
+# User-uploaded artifacts. These are end-user content served back over
+# GET /api/v1/software-management/storage/download/{storage_key}, not source.
+# Tracking them puts arbitrary uploaded files (including .py) into version
+# control.
+storage/
+
 # Codebase 
 .vscode/
 .idea/
