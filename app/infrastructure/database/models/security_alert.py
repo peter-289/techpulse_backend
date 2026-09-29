@@ -26,7 +26,7 @@ class SecurityAlert(Base):
     audit_event_id: Mapped[int | None] = mapped_column(ForeignKey("audit_events.id"), nullable=True)
     acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    acknowledged_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    acknowledged_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

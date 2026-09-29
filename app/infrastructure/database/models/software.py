@@ -19,12 +19,15 @@ class SoftwareModel(Base):
     __tablename__ = "sms_softwares"
     __table_args__ = (
         UniqueConstraint("owner_id", "name", name="uq_sms_software_owner_name"),
-        Index("ix_sms_softwares_owner_id", "owner_id"),
+        # NB: owner_id is indexed via `index=True` on the column below. Declaring
+        # an explicit Index for it here as well produced two Index objects with
+        # the same name, which made create_all/autogenerate emit the same DDL
+        # twice and fail with "index ... already exists".
         Index("ix_sms_softwares_created_at", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     # Category uses UUID primary keys; store as native PG UUID type when available
     category_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
    
@@ -65,12 +68,16 @@ class SoftwareArtifactModel(Base):
     __table_args__ = (
         UniqueConstraint("storage_key"),
         Index("ix_sms_artifacts_file_hash", "file_hash"),
-        Index("ix_sms_artifacts_version_id", "version_id"),
+        # version_id is indexed via `index=True` on the column below; declaring
+        # an explicit Index here too duplicated the index name and broke DDL.
         Index("ix_sms_artifacts_version_id_status", "version_id", "status"),
         Index("ix_sms_artifacts_created_at", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # `index=True` produces ix_sms_artifacts_version_id, which already exists in
+    # the database (see 3c7d9f4b2d91). Do not also declare it in __table_args__
+    # or the index name is registered twice and DDL fails.
     version_id: Mapped[str] = mapped_column(
         ForeignKey("sms_versions.id", ondelete="CASCADE"),
         nullable=False,

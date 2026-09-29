@@ -30,7 +30,7 @@ class AuditService:
         self,
         *,
         event_type: str,
-        actor_user_id: int | None,
+        actor_user_id: str | None,
         method: str,
         path: str,
         status_code: int,
@@ -150,7 +150,7 @@ class AuditService:
         *,
         event_type: str,
         from_time: datetime,
-        actor_user_id: int | None = None,
+        actor_user_id: str | None = None,
         ip_address: str | None = None,
     ) -> int:
         """
@@ -181,7 +181,7 @@ class AuditService:
         severity: str,
         title: str,
         description: str,
-        actor_user_id: int | None,
+        actor_user_id: str | None,
         ip_address: str | None,
         audit_event_id: int | None,
         dedup_from: datetime,

@@ -38,9 +38,6 @@ target_metadata = Base.metadata
 
 # Get connection args based on DATABASE 
 def get_connect_args() -> dict:
-   
-    print("TYPE:", type(settings.DATABASE_URL_SYNC))
-    
     if settings.DATABASE_URL_SYNC.startswith("sqlite"):
         return {"timeout": 15}
     elif settings.DATABASE_URL_SYNC.startswith("postgresql") or settings.DATABASE_URL_SYNC.startswith("postgres"):
@@ -60,8 +57,6 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    print("TYPE:", type(settings.DATABASE_URL_SYNC))
-    
     context.configure(
         url=settings.DATABASE_URL_SYNC,
         target_metadata=target_metadata,

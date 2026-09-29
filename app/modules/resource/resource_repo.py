@@ -25,8 +25,8 @@ class ResourceRepo:
         stmt = select(Resource).order_by(Resource.created_at.desc())
         if type_filter:
             stmt = stmt.where(Resource.type == type_filter)
-            result = await self.db.execute(stmt)
-            return result.scalars().all()
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
     async def delete(self, resource: Resource) -> None:
         await self.db.delete(resource)

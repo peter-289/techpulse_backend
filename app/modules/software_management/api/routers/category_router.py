@@ -6,6 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.shared.enums import RoleEnum
 from app.modules.shared.dependencies import (
     CurrentUser,
     get_current_user,
@@ -44,7 +45,7 @@ def get_category_service(uow: UnitOfWork = Depends(get_unit_of_work)) -> Categor
 async def create_category(
     payload: CategoryCreate,
     service: CategoryService = Depends(get_category_service),
-    admin: CurrentUser = Depends(require_role("ADMIN")),
+    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> CategoryResponse:
     """Create a category. Admins only."""
     logger.info("Category create requested by admin=%s", admin.user_id)
@@ -96,7 +97,7 @@ async def update_category(
     category_id: UUID,
     payload: CategoryUpdate,
     service: CategoryService = Depends(get_category_service),
-    admin: CurrentUser = Depends(require_role("ADMIN")),
+    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> CategoryResponse:
     """Rename and/or update a category description. Admins only."""
     logger.info("Category update requested: id=%s admin=%s", category_id, admin.user_id)
@@ -117,7 +118,7 @@ async def update_category(
 async def delete_category(
     category_id: UUID,
     service: CategoryService = Depends(get_category_service),
-    admin: CurrentUser = Depends(require_role("ADMIN")),
+    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> Response:
     """Soft-delete a category. Admins only. Blocked while software is assigned."""
     logger.info("Category delete requested: id=%s admin=%s", category_id, admin.user_id)
@@ -130,7 +131,7 @@ async def delete_category(
 async def restore_category(
     category_id: UUID,
     service: CategoryService = Depends(get_category_service),
-    admin: CurrentUser = Depends(require_role("ADMIN")),
+    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> CategoryResponse:
     """Restore a previously soft-deleted category. Admins only."""
     logger.info("Category restore requested: id=%s admin=%s", category_id, admin.user_id)

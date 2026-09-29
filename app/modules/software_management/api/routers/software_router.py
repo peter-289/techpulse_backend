@@ -16,7 +16,7 @@ from app.modules.shared.dependencies import (
 )
 
 from app.modules.software_management.domain.exceptions import SoftwareDomainError
-from app.modules.shared.enums import SoftwareVisibility
+from app.modules.shared.enums import RoleEnum, SoftwareVisibility
 from app.modules.software_management.schema.software_schema import (
     ArtifactResponse,
     SoftwareRead,
@@ -260,7 +260,7 @@ async def download_artifact(
         # Get client ip
         ip = abuse_protection.get_client_ip(request=request)
         
-        abuse_protection.guard_download(ip=ip)
+        await abuse_protection.guard_download(ip=ip)
         url = await service.download_artifact_url(
             software_id=software_id,
             version_number=version,
@@ -285,7 +285,7 @@ async def download_version(
         # Get client ip
         ip = abuse_protection.get_client_ip(request=request)
 
-        abuse_protection.guard_download(ip=ip)
+        await abuse_protection.guard_download(ip=ip)
         url = await service.create_download_url(
             software_id=software_id,
             version_number=version,
@@ -345,7 +345,7 @@ async def search(
 async def admin_packages(
     limit: int = Query(100, ge=1, le=200),
     service: SoftwareService = Depends(get_software_service),
-    admin:CurrentUser = Depends(require_role("ADMIN")),
+    admin:CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> list[SoftwareRead]:
     user_id = admin.user_id
     items, _ = await service.list_visible(user_id=user_id, limit=limit)
@@ -355,7 +355,7 @@ async def admin_packages(
 @router.get("/admin/summary", response_model=SoftwareSummary)
 async def admin_summary(
     service: SoftwareService = Depends(get_software_service),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> SoftwareSummary:
     items, _ = await service.list_visible(user_id=current_user.user_id, limit=200)
     versions = [version for software in items for version in software.versions]

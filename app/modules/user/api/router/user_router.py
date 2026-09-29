@@ -9,6 +9,7 @@ from ...application.services.user_service import UserService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.authentication.auth_service import AuthService
 from app.modules.shared.dependencies import require_role, get_current_user, get_db, get_abuse_protection, CurrentUser
+from app.modules.shared.enums import RoleEnum
 from app.modules.security.abuse_protection import AbuseProtection
 
 from app.exceptions.exceptions import DomainError
@@ -71,18 +72,21 @@ async def get_my_profile(
 @router.get("/users", response_model=Optional[list[UserRead]], status_code=200)
 async def list_users(
     limit: int = Query(100, ge=1, le=200),
+    before_id: str | None = Query(
+        None,
+        description="Keyset cursor: the user id to page before. Use the last id of the previous page.",
+    ),
     service: UserService = Depends(get_service),
-    _admin: dict = Depends(require_role("ADMIN")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
-    users = await service.list_users(limit=limit)
-    return users
+    return await service.list_users(limit=limit, before_id=before_id)
 
 # Get user by id
 @router.get("/users/{user_id}", response_model=UserRead, status_code=200)
 async def get_user(
     user_id: UUID,
     service: UserService = Depends(get_service),
-    _admin: dict = Depends(require_role("ADMIN")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     user = await service.get_user_by_id(user_id=user_id)
     return user

@@ -12,7 +12,7 @@ from starlette.requests import Request
 
 
 from app.core.config import settings
-from app.modules.shared.dependencies import get_current_user_optional
+from app.modules.shared.dependencies import resolve_optional_user, get_redis, _get_abuse_protection
 from app.modules.security.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.db_setup import SessionLocal
@@ -41,7 +41,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
         finally:
         
             duration_ms = int((time.perf_counter() - started_at) * 1000)
-            client_ip = request.client.host if request.client else "-"
+            # Resolve the client IP once, through the same helper the rate
+            # limiters use, so audit records show the address that was actually
+            # enforced against rather than the proxy's.
+            client_ip = _get_abuse_protection(get_redis()).get_client_ip(request) or "-"
             path_with_query = request.url.path
             if request.url.query:
                 path_with_query = f"{path_with_query}?{request.url.query}"
@@ -71,11 +74,17 @@ class AuditMiddleware(BaseHTTPMiddleware):
             if settings.AUDIT_ENABLED and not self._should_skip(request.url.path):
                 actor_user_id = getattr(request.state, "audit_actor_user_id", None)
                 if actor_user_id is None:
-                    maybe_user = get_current_user_optional(request)
-                    actor_user_id = maybe_user["user_id"] if maybe_user else None
+                    try:
+                        async with SessionLocal() as audit_session:
+                            maybe_user = await resolve_optional_user(request, audit_session)
+                        actor_user_id = str(maybe_user.user_id) if maybe_user else None
+                    except Exception as exc:
+                        # Attribution is best-effort; never fail a request over it.
+                        logger.debug("Audit actor resolution failed: %s", exc)
+                        actor_user_id = None
 
                 event_type = self._classify_event_type(request.url.path, status_code)
-                ip_address = request.client.host if request.client else None
+                ip_address = client_ip
                 user_agent = request.headers.get("user-agent")
 
             

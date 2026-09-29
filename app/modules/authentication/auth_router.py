@@ -76,19 +76,25 @@ async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     service: AuthService = Depends(get_service),
+    abuse: AbuseProtection = Depends(get_abuse_protection),
       ):
     username = (form_data.username or "").strip()
     password = form_data.password
     
 
     user_agent = request.headers.get("user-agent") if request else None
-    ip_address = request.client.host if request and request.client else None
+    # Must go through get_client_ip() so the brute-force limiter is keyed the
+    # same way as every other guarded endpoint. Reading request.client.host
+    # directly keys the limiter on the proxy's address, so behind a load
+    # balancer every user shares one bucket and a single attacker can lock out
+    # login for everyone.
+    ip_address = abuse.get_client_ip(request)
     
-    user, access_token = await service.login(username, password, ip_address)
-    refresh_token, _session = await service.create_session(
-        user_id=user.id,
-        user_agent=user_agent,
-        ip_address=ip_address,
+    user, access_token, refresh_token = await service.login(
+        username,
+        password,
+        ip_address,
+        user_agent,
     )
     
 
@@ -121,6 +127,7 @@ async def refresh_session(
     request: Request,
     response: Response,
     service: AuthService = Depends(get_service),
+    abuse: AbuseProtection = Depends(get_abuse_protection),
 ):
     
     # Get refresh token from cookie
@@ -138,7 +145,8 @@ async def refresh_session(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
 
     user_agent = request.headers.get("user-agent") if request else None
-    ip_address = request.client.host if request and request.client else None
+    # Same reason as login: keep refresh throttling keyed consistently.
+    ip_address = abuse.get_client_ip(request)
     user, access_token, new_refresh = await service.rotate_session(
         refresh_token=refresh_token,
         user_agent=user_agent,

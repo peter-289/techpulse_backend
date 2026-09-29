@@ -23,6 +23,20 @@ from sqlalchemy.exc import SQLAlchemyError
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# A real Argon2 hash of a random secret, used to spend the same amount of CPU on
+# an unknown username as on a known one. Without it, login answered in ~0.4ms for
+# a missing user and ~280ms for a real one, which enumerates accounts.
+_DUMMY_PASSWORD_HASH: str | None = None
+
+
+def _dummy_password_hash() -> str:
+    """Lazily compute (once) a throwaway hash for constant-time login."""
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
+    return _DUMMY_PASSWORD_HASH
+
+
 class AuthService:
     def __init__(self, uow: UnitOfWork, abuse_protection: AbuseProtection):
         self.uow = uow # Context manager
@@ -30,11 +44,26 @@ class AuthService:
         self._tokens = TokenManager(abuse_protection=abuse_protection)
     
     # Login API
-    async def login(self, username: str, password: str, ip: str):
-        """Rate limited login API."""
+    async def login(self, username: str, password: str, ip: str, user_agent: str | None = None):
+        """Rate limited login API.
+
+        The session is created first so the access token can be bound to its
+        ``sid``; that is what lets a later logout invalidate the access token.
+        """
         await self._abuse.guard_login(ip, username)
-        user, token = await self._authenticate(username, password)
-        return user, token
+        user = await self._authenticate(username, password)
+        refresh_token, session = await self.create_session(
+            user_id=str(user.id),
+            user_agent=user_agent,
+            ip_address=ip,
+        )
+        access_token = self._access_token_for(user, session.id)
+        return user, access_token, refresh_token
+
+    def _access_token_for(self, user, session_id: int) -> str:
+        return self._tokens.create_login_token(
+            data={"sub": str(user.id), "sid": session_id}
+        )
     
 
     # Authenticate user and return a user and a token
@@ -50,30 +79,28 @@ class AuthService:
            async with self.uow:
                 # Fetch user and perform security checks
                 user = await self.uow.user_repo.get_user_by_username(normalized_username)
-                verified_hash =  await run_in_threadpool(verify_password, user.password_hash, password) if user else None
-                
+
+                # Always run Argon2, even when the username is unknown, so the
+                # response time does not disclose whether the account exists.
+                stored_hash = user.password_hash if user else _dummy_password_hash()
+                verified_hash = await run_in_threadpool(verify_password, stored_hash, password)
+
                 if not user or not verified_hash:
                     raise DomainError("Invalid username or password")
                 
                 if user.status != UserStatus.VERIFIED:
-                    raise UnauthorizedError("Email not approved")
+                    # Deliberately masked below into the generic error: revealing
+                    # "exists but unverified" would confirm the account exists.
+                    raise DomainError("Email not approved")
              
                 # Opportunistically upgrade hash parameters on successful login.
                 if verified_hash != user.password_hash:
                     user.password_hash = verified_hash
-
-                payload = {
-                    "sub": str(user.id),
-                    "role": user.role.value
-                    if hasattr(user.role, "value") 
-                    else str(user.role)
-                }
-                token = self._tokens.create_login_token(data=payload)
         except DomainError:
             raise UnauthorizedError("Invalid username or password")
         except SQLAlchemyError as e: 
             raise DomainError("Database error") from e
-        return user, token
+        return user
     
 
     # Verify user account by email
@@ -83,6 +110,10 @@ class AuthService:
         user = get_email_user(token=token)
         if not user:
             raise UnauthorizedError("Invalid token.")
+        if not await self._tokens.consume_email_verification_token(
+            token=token, exp=user["exp"]
+        ):
+            raise UnauthorizedError("Verification link has already been used.")
         async with self.uow:
             # Fetch a user from db
             user_acc = await self.uow.user_repo.get_user_by_id(user["user_id"])
@@ -220,9 +251,11 @@ class AuthService:
             session.last_used_at = now
             session.user_agent = user_agent or session.user_agent
             session.ip_address = ip_address or session.ip_address
+            session_id = session.id
 
-        payload = {"sub": str(user.id), "role": user.role.value if hasattr(user.role, "value") else str(user.role)}
-        access_token = self._tokens.create_login_token(data=payload)
+        # The rotated access token stays bound to the same session, so revoking
+        # that session invalidates both the refresh token and the access token.
+        access_token = self._access_token_for(user, session_id)
         return user, access_token, new_refresh
     
 

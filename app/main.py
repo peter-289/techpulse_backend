@@ -61,7 +61,7 @@ def _normalize_origins(raw_origins: str) -> list[str]:
 # Origins
 origins = _normalize_origins(settings.FRONTEND_URL)
 for fallback_origin in (
-    "http://localhost:3000",
+    "http://localhost:3000", 
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",

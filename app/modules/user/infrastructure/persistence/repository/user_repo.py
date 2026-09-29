@@ -68,14 +68,29 @@ class UserRepo:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_users(self, cursor: datetime | None = None, limit: int = 100) -> list[User] | None:
+    async def list_users(
+        self,
+        cursor: datetime | None = None,
+        limit: int = 100,
+        before_id: str | None = None,
+    ) -> list[User]:
+        """Return a page of users ordered by id (descending).
+
+        Keyset pagination: pass ``before_id`` (the last id of the previous page)
+        to fetch the next page. ``cursor`` is accepted for backwards
+        compatibility and applied as a ``created_at`` upper bound.
+
+        Always returns a list. The previous implementation returned ``None``
+        implicitly whenever ``cursor`` was ``None``.
+        """
+        limit = max(1, min(int(limit), 200))
         stmt = select(User).order_by(User.id.desc()).limit(limit)
-        if cursor is not None:
-            #raise NotImplementedError("Method not implemented.")
+        if before_id is not None:
+            stmt = stmt.where(User.id < before_id)
+        elif cursor is not None:
             stmt = stmt.where(User.created_at < cursor)
-            result = await self.db.execute(stmt)
-            
-            return result.scalars().all()
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
 
     async def list_users_pending_verification_email_retry(

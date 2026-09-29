@@ -22,10 +22,13 @@ class SessionRepo:
         
         return result.scalar_one_or_none()
 
-    def revoke_session(self, session: UserSession, revoked_at: datetime) -> None:
+    async def revoke_session(self, session: UserSession, revoked_at: datetime) -> None:
+        # Async because AuthService awaits this. It used to be sync, so logout
+        # raised "object NoneType can't be used in 'await' expression" and 500'd
+        # before the auth cookies were cleared, leaving the session usable.
         session.revoked_at = revoked_at
 
-    async def revoke_user_sessions(self, user_id: int, revoked_at: datetime) -> None:
+    async def revoke_user_sessions(self, user_id: str, revoked_at: datetime) -> None:
         stmt = (
             update(UserSession)
             .where(UserSession.user_id == user_id)

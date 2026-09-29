@@ -1,7 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.shared.dependencies import require_role, get_current_user, get_db
+from app.modules.shared.dependencies import (
+    CurrentUser,
+    get_current_user,
+    get_db,
+    require_role,
+)
+from app.modules.shared.enums import RoleEnum
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.resource.resource_schema import ResourceCreate, ResourceRead
 from app.modules.resource.resource_service import ResourceService
@@ -17,7 +23,7 @@ def get_service(db: AsyncSession = Depends(get_db)) -> ResourceService:
 async def list_resources(
     type: str | None = Query(None),
     service: ResourceService = Depends(get_service),
-    _user: dict = Depends(get_current_user),
+    _user: CurrentUser = Depends(get_current_user),
 ):
     return await service.list_resources(type_filter=type)
 
@@ -26,8 +32,8 @@ async def list_resources(
 async def get_resource(
     slug: str,
     service: ResourceService = Depends(get_service),
-    _user: dict = Depends(get_current_user),
-): 
+    _user: CurrentUser = Depends(get_current_user),
+):
     return await service.get_by_slug(slug=slug)
 
 
@@ -35,7 +41,7 @@ async def get_resource(
 async def create_resource(
     payload: ResourceCreate,
     service: ResourceService = Depends(get_service),
-    _admin: dict = Depends(require_role("admin")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     return await service.create_resource(payload)
 
@@ -44,8 +50,7 @@ async def create_resource(
 async def delete_resource(
     slug: str,
     service: ResourceService = Depends(get_service),
-    _admin: dict = Depends(require_role("admin")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     await service.delete_resource(slug=slug)
     return None
-

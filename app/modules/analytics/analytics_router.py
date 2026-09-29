@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.shared.dependencies import get_db
-from app.modules.shared.dependencies import get_current_user
+from app.modules.shared.dependencies import CurrentUser, get_current_user, get_abuse_protection
+from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.shared.enums import CookieConsent
@@ -32,7 +33,7 @@ def _safe_metadata(raw: dict | None) -> dict:
     for key, value in raw.items():
         key_str = str(key)[:80]
         if isinstance(value, (str, int, float, bool)) or value is None:
-            safe[key_str] = value
+           safe[key_str] = value
         else:
             safe[key_str] = str(value)[:500]
     return safe
@@ -43,7 +44,8 @@ async def capture_analytics_event(
     payload: AnalyticsEventRequest,
     request: Request,
     service: AuditService=Depends(get_service),
-    current_user: dict = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
+    abuse_protection: AbuseProtection = Depends(get_abuse_protection),
 ):
     is_cookie_event = payload.event_type == "cookie_consent"
     action = payload.action.lower()
@@ -67,12 +69,13 @@ async def capture_analytics_event(
     if payload.client_id:
         metadata["client_id"] = payload.client_id
 
-    ip_address = request.client.host if request.client else None
+    # Use the shared helper so the recorded address matches what rate limiters enforce.
+    ip_address = abuse_protection.get_client_ip(request) or None
     user_agent = request.headers.get("user-agent")
 
     await service.log_audit_event(
         event_type=event_type,
-        actor_user_id=int(current_user["user_id"]),
+        actor_user_id=str(current_user.user_id),
         method=request.method,
         path=request.url.path,
         status_code=202,

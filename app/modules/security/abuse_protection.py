@@ -17,7 +17,7 @@ from app.exceptions.exceptions import TooManyRequestsError
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True)
 class Bucket:
     tokens: float
     last_refill: float
@@ -45,6 +45,10 @@ OTP_POLICY = RateLimitPolicy(capacity=1, refill_rate=1 / 3600)
 SESSION_POLICY = _policy_from_settings(settings.AUTH_REFRESH_RATE_LIMIT, settings.AUTH_REFRESH_WINDOW_SECONDS)
 DOWNLOAD_POLICY = RateLimitPolicy(capacity=1, refill_rate=1 / 30)
 
+# Upper bound for the in-process fallback buckets, so a long-running process
+# cannot accumulate one entry per distinct IP indefinitely.
+_MEMORY_BUCKET_LIMIT = 10_000
+
 
 class AbuseProtection:
     def __init__(self, redis_client: Optional[Redis]) -> None:
@@ -52,6 +56,19 @@ class AbuseProtection:
         self._memory_buckets: dict[str, Bucket] = {}
         self._one_time_memory: dict[str, int] = {}
         self._lock = threading.Lock()
+
+    @property
+    def redis_client(self) -> Optional[Redis]:
+        return self._redis
+
+    def _evict_expired(self, now: float) -> None:
+        """Drop stale in-memory buckets so the dicts cannot grow unbounded.
+
+        Caller must hold ``self._lock``.
+        """
+        stale = [key for key, expires_at in self._one_time_memory.items() if expires_at <= now]
+        for key in stale:
+            del self._one_time_memory[key]
 
     @staticmethod
     def _hash(value: str) -> str:
@@ -82,30 +99,42 @@ class AbuseProtection:
             try:
                 return await self._allow_redis(key=key, policy=policy)
             except Exception as exc:
+                # Redis being unreachable is an expected condition: fall back
+                # to the in-process limiter rather than failing open.
                 logger.warning("Redis rate limiting failed: %s", exc)
 
-        try:
-            return await self._allow_memory(key=key, policy=policy)
-        except Exception as exc:
-            logger.warning("Memory rate limiting failed: %s", exc)
-            return False
+        # A failure here is a bug in the limiter itself, not an outage, so it
+        # must not be swallowed into a silent deny-all.
+        return await self._allow_memory(key=key, policy=policy)
 
     async def _allow_memory(self, key: str, policy: RateLimitPolicy) -> bool:
         now = time.monotonic()
-        bucket = self._memory_buckets.get(key)
-        if bucket is None:
-            bucket = Bucket(tokens=float(policy.capacity), last_refill=now)
-            self._memory_buckets[key] = bucket
+        with self._lock:
+            if len(self._memory_buckets) > _MEMORY_BUCKET_LIMIT:
+                # Buckets that have fully refilled carry no state worth keeping.
+                self._memory_buckets = {
+                    bucket_key: bucket
+                    for bucket_key, bucket in self._memory_buckets.items()
+                    if bucket.tokens < policy.capacity
+                }
 
-        elapsed = now - bucket.last_refill
-        bucket.tokens = min(float(policy.capacity), bucket.tokens + elapsed * policy.refill_rate)
-        bucket.last_refill = now
+            bucket = self._memory_buckets.get(key)
+            if bucket is None:
+                bucket = Bucket(tokens=float(policy.capacity), last_refill=now)
+                self._memory_buckets[key] = bucket
 
-        if bucket.tokens < 1:
-            return False
+            elapsed = now - bucket.last_refill
+            bucket.tokens = min(
+                float(policy.capacity),
+                bucket.tokens + elapsed * policy.refill_rate,
+            )
+            bucket.last_refill = now
 
-        bucket.tokens -= 1
-        return True
+            if bucket.tokens < 1:
+                return False
+
+            bucket.tokens -= 1
+            return True
 
     async def _allow_redis(self, key: str, policy: RateLimitPolicy) -> bool:
         """Redis rate limiting implementation."""
@@ -174,11 +203,19 @@ class AbuseProtection:
                 acquired = await self._redis.set(key, "1", ex=ttl_seconds, nx=True)
                 return bool(acquired)
             except Exception as exc:
-                logger.warning("Redis acquire_once() failed: %s", exc)
+                # This is replay protection, not throttling. Falling back to the
+                # in-process dict here would make the guarantee per-worker, so a
+                # replayed token would be accepted by any other worker or replica.
+                # Fail closed instead: the user retries, which is recoverable.
+                logger.error("Redis acquire_once() failed, denying to preserve single-use guarantee: %s", exc)
+                return False
 
+        # No Redis configured at all (single-process dev/test). The in-process
+        # lock is the best available guarantee.
         now = int(time.time())
         expires_at = now + ttl_seconds
         with self._lock:
+            self._evict_expired(float(now))
             existing = self._one_time_memory.get(key)
             if existing is not None and existing > now:
                 return False
@@ -189,19 +226,24 @@ class AbuseProtection:
         """
         Extract the client IP from a request.
 
-        Priority:
-        1. X-Forwarded-For
-        2. X-Real-IP
-        3. request.client.host
-        """
-        x_forwarded_for: Optional[str] = request.headers.get("x-forwarded-for")
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(",")[0].strip()
-            if ip:
-                return ip
+        Only reads ``X-Forwarded-For`` / ``X-Real-IP`` when
+        ``settings.TRUST_PROXY_HEADERS`` is enabled, because both headers are
+        trivially spoofable by the client. Trusting them unconditionally lets an
+        attacker mint a fresh rate-limit bucket per request, which fully defeats
+        the login brute-force limiter.
 
-        x_real_ip: Optional[str] = request.headers.get("x-real-ip")
-        if x_real_ip:
-            return x_real_ip.strip()
+        With the default (untrusted) setting the socket peer is used, which is
+        the only address the client cannot choose itself.
+        """
+        if settings.TRUST_PROXY_HEADERS:
+            x_forwarded_for: Optional[str] = request.headers.get("x-forwarded-for")
+            if x_forwarded_for:
+                ip = x_forwarded_for.split(",")[0].strip()
+                if ip:
+                    return ip
+
+            x_real_ip: Optional[str] = request.headers.get("x-real-ip")
+            if x_real_ip:
+                return x_real_ip.strip()
 
         return request.client.host if request.client else ""

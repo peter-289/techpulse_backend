@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.shared.dependencies import require_role, get_db
+from app.modules.shared.dependencies import CurrentUser, require_role, get_db
+from app.modules.shared.enums import RoleEnum
 from app.infrastructure.database.models.audit_event import AuditEvent
 from app.infrastructure.database.models.security_alert import SecurityAlert
 
@@ -40,7 +41,7 @@ def _tail_lines(path: Path, lines: int) -> list[str]:
 @router.get("/logs", status_code=200)
 def get_logs(
     lines: int = Query(200, ge=1, le=1000),
-    _admin: dict = Depends(require_role("ADMIN")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     log_path = Path(settings.LOG_FILE_PATH)
     return {
@@ -55,7 +56,7 @@ async def list_security_alerts(
     only_unacknowledged: bool = Query(True),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(require_role("ADMIN")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     stmt = select(SecurityAlert).order_by(SecurityAlert.created_at.desc()).limit(limit)
     if only_unacknowledged:
@@ -88,7 +89,7 @@ async def list_security_alerts(
 async def acknowledge_security_alert(
     alert_id: int = ApiPath(..., ge=1),
     db: AsyncSession = Depends(get_db),
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     alert = await db.get(SecurityAlert, alert_id)
     if not alert:
@@ -97,7 +98,7 @@ async def acknowledge_security_alert(
         return {"detail": "Alert already acknowledged", "alert_id": alert_id}
     alert.acknowledged = True
     alert.acknowledged_at = datetime.now(timezone.utc)
-    alert.acknowledged_by_user_id = int(admin["user_id"])
+    alert.acknowledged_by_user_id = str(admin.user_id)
     await db.commit()
     return {"detail": "Alert acknowledged", "alert_id": alert_id}
 
@@ -108,13 +109,13 @@ async def list_audit_events(
     actor_user_id: UUID | None = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(require_role("ADMIN")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     stmt = select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(limit)
     if event_type:
         stmt = stmt.where(AuditEvent.event_type == event_type)
     if actor_user_id is not None:
-        stmt = stmt.where(AuditEvent.actor_user_id == actor_user_id)
+        stmt = stmt.where(AuditEvent.actor_user_id == str(actor_user_id))
     events = await db.execute(stmt)
     return {
         "count": len(events.scalars().all()),
@@ -139,10 +140,10 @@ async def list_audit_events(
 
 @router.get("/cookie-activity", status_code=200)
 async def list_cookie_activity(
-    actor_user_id: int | None = Query(None, ge=1),
+    actor_user_id: UUID | None = Query(None),
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _admin: dict = Depends(require_role("ADMIN")),
+    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ):
     tracked_types = (
         "cookie.consent.accepted",
@@ -156,7 +157,7 @@ async def list_cookie_activity(
         .limit(limit)
     )
     if actor_user_id is not None:
-        stmt = stmt.where(AuditEvent.actor_user_id == actor_user_id)
+        stmt = stmt.where(AuditEvent.actor_user_id == str(actor_user_id))
     events = await db.execute(stmt)
     return {
         "count": len(events.scalars().all()),

@@ -52,3 +52,9 @@ typing_extensions==4.15.0
 typing-inspection==0.4.2
 cffi==2.0.0
 pycparser==3.0
+
+# Test tooling. Kept in this file rather than a separate requirements-dev.txt
+# because the test suite is run from the same image in CI.
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1

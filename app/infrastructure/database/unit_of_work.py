@@ -1,3 +1,4 @@
+import typing
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +89,24 @@ class UnitOfWork:
     async def rollback(self) -> None:
         """Rollback the current transaction, undoing all pending changes."""
         await self.session.rollback()
+
+    _ASYNC_ONLY_MESSAGE = (
+        "UnitOfWork is async-only. Use 'async with uow:' for write "
+        "operations or 'async with uow.read_only():' for reads."
+    )
+
+    def __enter__(self) -> typing.NoReturn:
+        """Reject the synchronous protocol: this UoW only supports ``async with``.
+
+        A plain ``with self.uow:`` would otherwise surface as the opaque
+        "'UnitOfWork' object does not support the context manager protocol".
+        """
+        raise TypeError(self._ASYNC_ONLY_MESSAGE)
+
+    def __exit__(self, *exc_info: object) -> typing.NoReturn:
+        # `with` requires both dunders to be present before __enter__ is called,
+        # so this exists purely to make the guard above reachable.
+        raise TypeError(self._ASYNC_ONLY_MESSAGE)
 
     async def __aenter__(self):
         """Enter context manager - returns self for use in with statement."""

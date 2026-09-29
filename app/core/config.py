@@ -78,6 +78,15 @@ class AppSettings(BaseSettings):
     REDIS_PASSWORD: str | None = None
     REDIS_DB: int = 0
     REDIS_USERNAME: str | None = None
+
+    # Reverse proxy
+    # X-Forwarded-For / X-Real-IP are attacker-controlled unless a trusted proxy
+    # overwrites them. Only enable this when a proxy you control sits in front of
+    # the app AND strips these headers from inbound client requests; otherwise the
+    # client can spoof a fresh IP per request to bypass every IP rate limit
+    # (including the login brute-force limiter).
+    TRUST_PROXY_HEADERS: bool = False
+
     
 
     @property

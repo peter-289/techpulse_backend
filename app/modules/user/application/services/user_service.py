@@ -5,7 +5,6 @@ import logging
 from fastapi.concurrency import run_in_threadpool
 from fastapi import Request
 import uuid
-from datetime import datetime
 
 from ...schema.user_schema import UserCreate
 from app.infrastructure.database.models.user import User
@@ -51,12 +50,10 @@ class UserService:
             return user
 
     # List users
-    async def list_users(self, limit: int = 100) -> list[User] | None:
+    async def list_users(self, limit: int = 100, before_id: str | None = None) -> list[User]:
        async with self.uow.read_only():
-            
-            cursor = datetime.now()
-            users = await self.uow.user_repo.list_users(cursor=cursor, limit=limit)
-            logger.debug("Fetched users page", extra={"cursor": cursor, "limit": limit})
+            users = await self.uow.user_repo.list_users(limit=limit, before_id=before_id)
+            logger.debug("Fetched users page", extra={"limit": limit, "before_id": before_id})
             return users
 
     # Get user by id
