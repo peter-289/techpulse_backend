@@ -10,7 +10,7 @@ from typing import BinaryIO, Sequence
 from uuid import UUID, uuid4
 
 from app.core.config import settings
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.software_management.domain.ports.unit_of_work import SoftwareManagementUnitOfWork
 from app.modules.shared.enums import ArtifactStatus, SoftwareVisibility, VersionStatus
 from app.modules.software_management.application.services.category_service import CategoryService
 from app.modules.software_management.application.services.download_service import DownloadService
@@ -48,7 +48,7 @@ class SoftwareService:
         download_service: DownloadService | None = None,
         storage: Storage | None = None,
         malware_scanner: MalwareScanner | None = None,
-        unit_of_work: UnitOfWork | None = None,
+        unit_of_work: SoftwareManagementUnitOfWork | None = None,
         category_service: CategoryService | None = None,
     ) -> None:
         self._download_service = download_service

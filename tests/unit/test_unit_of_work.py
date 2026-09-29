@@ -11,6 +11,15 @@ from __future__ import annotations
 import pytest
 
 from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.authentication.domain.ports.unit_of_work import (
+    AuthenticationUnitOfWork,
+)
+from app.modules.resource.domain.ports.unit_of_work import ResourceUnitOfWork
+from app.modules.security.domain.ports.unit_of_work import SecurityUnitOfWork
+from app.modules.software_management.domain.ports.unit_of_work import (
+    SoftwareManagementUnitOfWork,
+)
+from app.modules.user.domain.ports.unit_of_work import UserUnitOfWork
 
 
 class _FakeSession:
@@ -84,3 +93,47 @@ def test_repositories_are_cached_per_uow() -> None:
     assert uow.resource_repo is uow.resource_repo
     assert uow.software_repo is uow.software_repo
     assert uow.audit_repo is uow.audit_repo
+
+
+ALL_PORTS = (
+    SoftwareManagementUnitOfWork,
+    UserUnitOfWork,
+    AuthenticationUnitOfWork,
+    ResourceUnitOfWork,
+    SecurityUnitOfWork,
+)
+
+
+@pytest.mark.parametrize("port", ALL_PORTS, ids=lambda p: p.__name__)
+def test_concrete_uow_satisfies_every_context_port(port: type) -> None:
+    """One adapter serves all five contexts.
+
+    The ports are structural, so a context adding a repository to its port
+    would not fail here -- it would fail as an AttributeError the first time
+    that context's service touched the new repository. This is the test that
+    turns that into a build failure.
+    """
+    assert isinstance(UnitOfWork(session=_FakeSession()), port)
+
+
+def test_no_application_service_imports_the_concrete_uow() -> None:
+    """No application service may name the concrete adapter.
+
+    Services are typed against their own context's port. Importing the
+    concrete class would couple the use case to the shared adapter and undo
+    the boundary the ports exist to create. The architecture suite's R4 rule
+    enforces the same thing statically; this asserts it at runtime so the
+    guarantee survives someone relaxing a ratchet entry.
+    """
+    from tests.architecture.layer_rules import collect
+
+    r4 = next(rule for rule in collect() if rule.rule_id == "R4")
+    offenders = [
+        v.source
+        for v in r4.violations
+        if v.target == "app.infrastructure.database.unit_of_work"
+    ]
+    assert offenders == [], (
+        "application services must depend on their context's UnitOfWork port, "
+        f"not the concrete class: {offenders}"
+    )

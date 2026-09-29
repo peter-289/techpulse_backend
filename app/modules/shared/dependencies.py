@@ -31,7 +31,7 @@ from app.modules.security.token_manager import (
     PASSWORD_RESET_TOKEN_TYPE,
 )
 from app.infrastructure.external_apis.scanner_service.malware_scanner import get_malware_scanner, MalwareScanner
-from app.infrastructure.storage.local_storage import DownloadUrlSigner, Storage
+from app.modules.software_management.domain.ports.storage import DownloadUrlSigner, Storage
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.software_management.application.services.software_service import SoftwareService
 from app.modules.software_management.application.services.download_service import DownloadService

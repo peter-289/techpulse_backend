@@ -8,7 +8,7 @@ import uuid
 
 from ...schema.user_schema import UserCreate
 from app.infrastructure.database.models.user import User
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.user.domain.ports.unit_of_work import UserUnitOfWork
 from app.modules.security.password_manager import hash_password
 from .rules import map_integrity_error, validate_password_strength
 from app.exceptions.exceptions import ConflictError, NotFoundError
@@ -20,7 +20,7 @@ from sqlalchemy.exc import IntegrityError
 logger = logging.getLogger(__name__)
 
 class UserService:
-    def __init__(self, uow: UnitOfWork, abuse_protection: AbuseProtection):
+    def __init__(self, uow: UserUnitOfWork, abuse_protection: AbuseProtection):
         self.uow = uow
         self._abuse = abuse_protection
 

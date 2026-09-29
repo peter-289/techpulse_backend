@@ -11,7 +11,7 @@ from app.modules.software_management.domain.exceptions import (
     DuplicateCategoryError,
 )
 from app.modules.software_management.domain.ports.repositories.category_repository import ICategoryRepository
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.software_management.domain.ports.unit_of_work import SoftwareManagementUnitOfWork
 
 
 logger = logging.getLogger(__name__)
@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class CategoryService:
     """Application service coordinating the category use cases.
 
-    Coordinates the :class:`UnitOfWork` and :class:`ICategoryRepository`.
+    Coordinates the :class:`SoftwareManagementUnitOfWork` and :class:`ICategoryRepository`.
     Contains no HTTP concerns and never exposes SQLAlchemy models.
     """
 
-    def __init__(self, unit_of_work: UnitOfWork) -> None:
+    def __init__(self, unit_of_work: SoftwareManagementUnitOfWork) -> None:
         self._uow = unit_of_work
 
     @property

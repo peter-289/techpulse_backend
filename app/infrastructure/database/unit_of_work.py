@@ -10,17 +10,31 @@ from app.modules.resource.resource_repo import ResourceRepo
 from app.modules.security.audit import AuditRepository
 from app.modules.software_management.infrastructure.persistence.repositories.sqlalchemy_software_repository import SQLAlchemySoftwareRepository
 from app.modules.software_management.infrastructure.persistence.repositories.category_repo import CategoryRepository
-
+from app.modules.authentication.domain.ports.unit_of_work import AuthenticationUnitOfWork
+from app.modules.resource.domain.ports.unit_of_work import ResourceUnitOfWork
+from app.modules.security.domain.ports.unit_of_work import SecurityUnitOfWork
+from app.modules.software_management.domain.ports.unit_of_work import SoftwareManagementUnitOfWork
+from app.modules.user.domain.ports.unit_of_work import UserUnitOfWork
 
 
 class UnitOfWork:
+    """Single concrete Unit of Work satisfying every context's port.
 
-    """Unit of Work pattern implementation for managing database transactions.
-    
-    Provides centralized access to all repositories and manages transaction boundaries
-    (commit/rollback). Uses lazy-loading to instantiate repositories only when needed.
-    Supports context manager protocol for automatic transaction handling.
+    Each bounded context declares its own port in
+    ``app/modules/<context>/domain/ports/unit_of_work.py`` and its services
+    type against that port, so no application service imports this class. This
+    one adapter is injected wherever a context's port is required, which is
+    what allows the contexts to stay separate while still sharing a
+    connection pool and a transaction implementation.
+
+    Note that a port restricts what a service *declares*, not what the object
+    can physically reach. ``_verify_port_conformance`` below checks that every
+    port's members are actually present, so a missing repository is caught at
+    import time rather than as an ``AttributeError`` on a live request. The
+    call sites in ``shared/dependencies.py`` are what keep a service from
+    *reaching* for a repository outside its context.
     """
+
     def __init__(self, session: AsyncSession):
         """Initialize the UnitOfWork with a database session.
         Args:
@@ -139,3 +153,49 @@ class UnitOfWork:
         except Exception:
             await self.rollback()
             raise
+
+
+def _verify_port_conformance() -> None:
+    """Assert this adapter satisfies every context's Unit of Work port.
+
+    Protocols are structural, so a repository missing from this class is not a
+    type error at the point of injection; it becomes an AttributeError the
+    first time that context's service touches it. Checking at import time
+    turns that into a startup failure, which is the difference between a
+    broken deploy and a 500 on one endpoint.
+    """
+    for port in (
+        SoftwareManagementUnitOfWork,
+        UserUnitOfWork,
+        AuthenticationUnitOfWork,
+        ResourceUnitOfWork,
+        SecurityUnitOfWork,
+    ):
+        missing = sorted(
+            name
+            for name in _protocol_members(port)
+            if not hasattr(UnitOfWork, name)
+        )
+        if missing:
+            raise TypeError(
+                f"{UnitOfWork.__name__} does not satisfy {port.__name__}: "
+                f"missing {', '.join(missing)}"
+            )
+
+
+def _protocol_members(port: type) -> set[str]:
+    """Collect the attribute names a port requires, including inherited ones."""
+    names: set[str] = set()
+    for base in port.__mro__:
+        if base is object or base is typing.Protocol:
+            continue
+        names.update(
+            name
+            for name, value in vars(base).items()
+            if not name.startswith("_")
+            or name in {"__aenter__", "__aexit__"}
+        )
+    return names
+
+
+_verify_port_conformance()

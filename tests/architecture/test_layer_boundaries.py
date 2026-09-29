@@ -112,6 +112,42 @@ def test_ratchet_is_not_used_for_rules_that_pass() -> None:
             )
 
 
+def test_r2_permits_ports_but_never_entities() -> None:
+    """The R2 refinement must stay as narrow as ADR 0003 describes it.
+
+    Phase 2 widened R2 so the shared adapter and composition root can import a
+    context's ports. That widening is only safe while it stops at the port
+    surface: allowing an entity import is how a shared module accumulates
+    knowledge of aggregates it does not own, which is the defect Phase 1
+    removed from ``shared/mappers.py``.
+
+    This test states that limit directly, so loosening the rule to make a
+    future violation pass has to be done in two places.
+    """
+    for source in ("app/infrastructure/x.py", "app/modules/shared/x.py"):
+        assert layer_rules._is_port_reader(source), source
+
+    assert layer_rules._is_port("app.modules.user.domain.ports.unit_of_work")
+    assert not layer_rules._is_port("app.modules.user.domain.entities.user")
+    assert not layer_rules._is_port("app.modules.user.domain.value_objects")
+    assert not layer_rules._is_port("app.modules.user.domain")
+
+    # A context must not gain the right to read a peer by being a port reader.
+    assert not layer_rules._is_port_reader("app/modules/user/x.py")
+    assert not layer_rules._is_port_reader("app/core/x.py")
+    assert not layer_rules._is_port_reader("app/exceptions/x.py")
+
+
+def test_shared_mappers_stay_gone() -> None:
+    """``shared/mappers.py`` must not reappear.
+
+    It is the one file that mapped every context's ORM models in the shared
+    kernel. It is gone now; R2 would catch it importing a context's domain,
+    but only by accident, so pin its absence directly.
+    """
+    assert not (layer_rules.APP_ROOT / "modules/shared/mappers.py").exists()
+
+
 @pytest.mark.parametrize("rule", RULES, ids=[r.rule_id for r in RULES])
 def test_layer_boundary_is_respected(rule: layer_rules.Rule) -> None:
     """No new boundary violation, and no stale ratchet entry.

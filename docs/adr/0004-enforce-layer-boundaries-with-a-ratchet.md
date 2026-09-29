@@ -32,7 +32,7 @@ At the start of the refactor the real state was:
 | R1 domain imports a framework | 0 |
 | R2 module imports another module's domain | 6 |
 | R3 domain imports infrastructure | 0 |
-| R4 application imports api/schema/infrastructure | 1 |
+| R4 application imports api/schema/infrastructure | 11 |
 | R5 application service imports an ORM model | 7 |
 | R6 API router builds SQLAlchemy statements | 1 |
 | R7 module's API imports another module's API | 0 |
@@ -103,7 +103,8 @@ next to the rule.
 
 - A new boundary violation fails CI with the exact file and import named.
 - `ratchet.json` is a live, ordered to-do list of remaining architecture debt.
-  Its length is a metric: 15 entries at the start of the refactor, 0 at the end.
+  Its length is a metric: 19 entries once the shared-adapter and ORM-import
+  edges were counted, 13 after Phase 2, 0 at the end.
 - The rules are executable prose, so they cannot drift from the code the way
   `ARCHITECTURE.md` did. Phase 9 rewrites that document to match reality, and
   these tests are what keep it honest.

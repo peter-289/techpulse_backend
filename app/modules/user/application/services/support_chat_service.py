@@ -4,7 +4,7 @@ import logging
 import requests
 
 from app.core.config import settings
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.user.domain.ports.unit_of_work import UserUnitOfWork
 from app.exceptions.exceptions import ExternalServiceError, ValidationError
 from app.infrastructure.database.models.chat_message import ChatMessage
 
@@ -21,7 +21,7 @@ class SupportChatService:
         "If a user asks for a status update on an issue, you may provide a generic response that the team is investigating and will provide updates as they become available. "
     )
 
-    def __init__(self, uow: UnitOfWork):
+    def __init__(self, uow: UserUnitOfWork):
         self.uow = uow # Context manager
 
     @staticmethod

@@ -41,7 +41,7 @@ from app.modules.software_management.domain.exceptions import (
         CategoryDeletedError,
         CategoryRepositoryUnavailableError,
 )
-from app.infrastructure.storage.local_storage import (
+from app.modules.software_management.domain.ports.storage import (
     StorageError,
     StorageUnavailableError,
     StorageWriteError,

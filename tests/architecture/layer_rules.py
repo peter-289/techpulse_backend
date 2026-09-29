@@ -112,6 +112,46 @@ PERMITTED_CROSS_CONTEXT_READERS: dict[str, str] = {
     ),
 }
 
+# Packages that are allowed to import *another* context's domain, but only the
+# public port surface (``domain.ports``) and never the entities or value
+# objects behind it.
+#
+# Two kinds of caller qualify, and they qualify for the same reason: they are
+# not a bounded context, so they have no domain of their own that another
+# context's model could collide with.
+#
+# - ``app.infrastructure`` is the shared adapter layer. Adapters implement
+#   ports, so implementing another context's port requires importing it. This
+#   mirrors what per-context infrastructure is already permitted to do; the
+#   shared package was simply never covered because no shared adapter had
+#   needed a port until now.
+# - ``app.modules.shared`` holds the composition root. Wiring a concrete
+#   implementation to the port it satisfies means naming both.
+#
+# Why only ``domain.ports`` and not all of ``domain``. An entity import is how
+# a shared module starts accumulating knowledge of aggregates it does not own:
+# the exact defect that ``app/modules/shared/mappers.py`` had in Phase 1.
+# Allowing ports here keeps the composition root and shared adapters honest
+# while leaving that rule impossible to violate by accident.
+PORT_READERS: tuple[str, ...] = ("app/infrastructure", "app/modules/shared")
+
+
+def _is_port(target: str) -> bool:
+    """Whether an import targets a context's port surface."""
+    parts = target.split(".")
+    if "modules" not in parts:
+        return False
+    rest = parts[parts.index("modules") + 2 :]
+    return len(rest) >= 2 and rest[0] == "domain" and rest[1] == "ports"
+
+
+def _is_port_reader(source: str) -> bool:
+    """Whether a source file may import any context's ports."""
+    return any(
+        source == prefix or source.startswith(prefix + "/")
+        for prefix in PORT_READERS
+    )
+
 
 
 def _module_name(path: Path) -> str:
@@ -239,15 +279,18 @@ def rule_domain_is_framework_free() -> Rule:
 def rule_bounded_context_isolation() -> Rule:
     """R2: a feature module must not import another module's domain layer.
 
-    Hard rule. Cross-context coupling is only permitted through
-    ``app.modules.shared``. The single deliberate exception is
+    Hard rule. A bounded context may only reach another context's *ports*,
+    through the shared adapter layer or the composition root
+    (:data:`PORT_READERS`), never its entities or value objects.
+
+    A context importing another context's entity is the real failure here: it
+    means one aggregate has become load-bearing for another's behaviour. Ports
+    are the sanctioned way to ask for a capability, and :func:`_is_port`
+    admits exactly that.
+
+    The single deliberate exception outside that is
     ``app/exceptions/handlers.py``, listed in
     ``PERMITTED_CROSS_CONTEXT_READERS``.
-
-    One known violation remains: ``app/modules/shared/mappers.py`` maps ORM
-    models to the software_management domain entities. ARCHITECTURE.md 5.3
-    places mappers in ``infrastructure/persistence/mappers``; the shared kernel
-    has no business knowing one context's aggregates.
     """
     violations = []
     for path in _python_files():
@@ -257,8 +300,11 @@ def rule_bounded_context_isolation() -> Rule:
         own = _module_name(path)
         for target in _parse_imports(path):
             other, layer = _import_layer(target)
-            if layer == "domain" and other is not None and other != own:
-                violations.append(Violation("R2", source, target))
+            if layer != "domain" or other is None or other == own:
+                continue
+            if _is_port_reader(source) and _is_port(target):
+                continue
+            violations.append(Violation("R2", source, target))
     return Rule(
         "R2",
         "a module must not import another module's domain layer (use app.modules.shared)",

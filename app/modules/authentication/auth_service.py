@@ -7,7 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.modules.user.application.services.rules import validate_password_strength
 from app.modules.security.password_manager import hash_password, verify_password
 from app.modules.security.token_manager import TokenManager
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.authentication.domain.ports.unit_of_work import AuthenticationUnitOfWork
 from app.exceptions.exceptions import UnauthorizedError, DomainError, NotFoundError, UnauthorizedError
 from app.modules.shared.enums import UserStatus
 from app.infrastructure.database.models.session import UserSession
@@ -38,7 +38,7 @@ def _dummy_password_hash() -> str:
 
 
 class AuthService:
-    def __init__(self, uow: UnitOfWork, abuse_protection: AbuseProtection):
+    def __init__(self, uow: AuthenticationUnitOfWork, abuse_protection: AbuseProtection):
         self.uow = uow # Context manager
         self._abuse = abuse_protection
         self._tokens = TokenManager(abuse_protection=abuse_protection)

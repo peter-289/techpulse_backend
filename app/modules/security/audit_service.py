@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.config import settings
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.security.domain.ports.unit_of_work import SecurityUnitOfWork
 from app.exceptions.exceptions import DomainError
 from app.infrastructure.database.models.audit_event import AuditEvent
 from app.infrastructure.database.models.security_alert import SecurityAlert
@@ -23,7 +23,7 @@ class AuditService:
     - Creating security alerts
     """
 
-    def __init__(self, uow: UnitOfWork) -> None:
+    def __init__(self, uow: SecurityUnitOfWork) -> None:
         self.uow = uow
 
     async def log_audit_event(

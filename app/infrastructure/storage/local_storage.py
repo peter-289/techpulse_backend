@@ -10,49 +10,35 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
+from typing import BinaryIO
 
-from typing import BinaryIO, Protocol
-from dataclasses import dataclass
+from app.modules.software_management.domain.ports.storage import (
+    DownloadUrlSigner,
+    SignedDownloadUrl,
+    Storage,
+    StorageError,
+    StorageFileNotFoundError,
+    StorageReadError,
+    StorageSecurityError,
+    StorageUnavailableError,
+    StorageWriteError,
+)
 
-
-
-
+__all__ = [
+    "DownloadUrlSigner",
+    "HmacDownloadUrlSigner",
+    "LocalStorage",
+    "SignedDownloadUrl",
+    "Storage",
+    "StorageError",
+    "StorageFileNotFoundError",
+    "StorageReadError",
+    "StorageSecurityError",
+    "StorageUnavailableError",
+    "StorageWriteError",
+]
 
 logger = logging.getLogger(__name__)
-
-
-class StorageError(Exception):
-    """Base exception for all storage errors."""
-
-
-class StorageUnavailableError(StorageError):
-    """Raised when the storage backend is unreachable or misconfigured."""
-
-
-class StorageWriteError(StorageError):
-    """Raised when persisting an artifact fails."""
-
-
-class StorageReadError(StorageError):
-    """Raised when reading an artifact fails."""
-
-
-class StorageFileNotFoundError(StorageError):
-    """Raised when an artifact cannot be located on disk."""
-
-
-class StorageSecurityError(StorageError):
-    """Raised for malformed storage keys or path traversal attempts."""
-
-
-# Return type for HmacDownloadUrlSigner()
-@dataclass(frozen=True, slots=True)
-class SignedDownloadUrl:
-    """Data shape for a signed download URL."""
-    url: str
-    expires_at: int
-    token: str
-
 
 
 def _validate_storage_key(storage_key: str) -> str:
@@ -122,48 +108,6 @@ def _validate_storage_key(storage_key: str) -> str:
     return normalized
 
 
-class DownloadUrlSigner(Protocol):
-    """Port responsible for generating and validating temporary download URLs.
-
-    Implementations are responsible only for signing and verification.
-    They never access storage or perform authorization.
-    """
-
-    def create_url(
-        self,
-        *,
-        storage_key: str,
-        method: str = "GET",
-    ) -> SignedDownloadUrl:
-        """Generate a signed URL.
-
-        Args:
-            storage_key:
-                Storage object identifier.
-
-            method:
-                HTTP method the signature is bound to.
-
-        Returns:
-            Signed SignedDownloadUrl containing a URL that can later be verified.
-        """
-        ...
-
-    def verify_token(
-        self,
-        *,
-        storage_key: str,
-        expires: int,
-        token: str,
-        method: str = "GET",
-    ) -> bool:
-        """Verify a previously generated token.
-
-        Returns:
-            True if valid, otherwise False.
-        """
-        ...
-    
 class HmacDownloadUrlSigner(DownloadUrlSigner):
     """This implementation of DownloadUrlSigner uses HMAC to sign and verify download URLs."""
     def __init__(self, settings: DownloadUrlSignerSettings) -> None: #type: ignore
@@ -347,42 +291,6 @@ class HmacDownloadUrlSigner(DownloadUrlSigner):
 
 
 
-
-# Storage Protocol
-class Storage(Protocol):
-    """Abstract binary artifact storage.
-
-    Implementations provide persistence for software artifacts
-    regardless of the underlying storage backend.
-    """
-    def save(
-        self,
-        *,
-        storage_key: str,
-        source_path: Path,
-    ) -> None:
-        """Persist a file."""
-
-    def open(
-        self,
-        *,
-        storage_key: str,
-    ) -> BinaryIO:
-        """Open an artifact for reading."""
-
-    def delete(
-        self,
-        *,
-        storage_key: str,
-    ) -> None:
-        """Delete an artifact."""
-
-    def exists(
-        self,
-        *,
-        storage_key: str,
-    ) -> bool:
-        """Determine whether an artifact exists."""
 
 class LocalStorage(Storage):
     """Local filesystem adapter for persistent binary artifacts.

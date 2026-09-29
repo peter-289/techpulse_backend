@@ -8,9 +8,15 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.exceptions.exceptions import ExternalServiceError
-from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.infrastructure.storage.local_storage import Storage, StorageFileNotFoundError, StorageSecurityError, StorageUnavailableError
+from app.modules.software_management.domain.ports.unit_of_work import SoftwareManagementUnitOfWork
+from app.modules.software_management.domain.ports.storage import (
+    Storage,
+    StorageFileNotFoundError,
+    StorageSecurityError,
+    StorageUnavailableError,
+)
 from app.modules.software_management.domain.entities.artifact import Artifact
+
 from app.modules.software_management.domain.exceptions import (
     ArtifactNotFoundError,
     RepositoryUnavailableError,
@@ -28,7 +34,7 @@ logger = logging.getLogger(__name__)
 class DownloadService:
     """Application service for generating download URLs and recording downloads."""
 
-    def __init__(self, *, uow: UnitOfWork, url_signer: DownloadSigner, storage: Storage) -> None:
+    def __init__(self, *, uow: SoftwareManagementUnitOfWork, url_signer: DownloadSigner, storage: Storage) -> None:
         self._uow = uow
         self._url_signer = url_signer
         self._storage = storage

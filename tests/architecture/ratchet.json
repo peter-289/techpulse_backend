@@ -19,37 +19,12 @@
     "",
     "See docs/adr/0004-enforce-layer-boundaries-with-a-ratchet.md."
   ],
-
   "violations": [
-    {
-      "rule": "R4",
-      "source": "app/modules/software_management/application/services/category_service.py",
-      "import": "app.infrastructure.database.unit_of_work",
-      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
-    },
-    {
-      "rule": "R4",
-      "source": "app/modules/software_management/application/services/download_service.py",
-      "import": "app.infrastructure.database.unit_of_work",
-      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
-    },
-    {
-      "rule": "R4",
-      "source": "app/modules/software_management/application/services/download_service.py",
-      "import": "app.infrastructure.storage.local_storage",
-      "phase": "Phase 2 - import the Storage port from domain, not the local adapter"
-    },
     {
       "rule": "R4",
       "source": "app/modules/software_management/application/services/software_service.py",
       "import": "app.core.config",
       "phase": "Phase 3 - read the upload size limit through an injected value object"
-    },
-    {
-      "rule": "R4",
-      "source": "app/modules/software_management/application/services/software_service.py",
-      "import": "app.infrastructure.database.unit_of_work",
-      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
     },
     {
       "rule": "R4",
@@ -71,21 +46,9 @@
     },
     {
       "rule": "R4",
-      "source": "app/modules/user/application/services/support_chat_service.py",
-      "import": "app.infrastructure.database.unit_of_work",
-      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
-    },
-    {
-      "rule": "R4",
       "source": "app/modules/user/application/services/user_service.py",
       "import": "app.infrastructure.database.models.user",
       "phase": "Phase 6 - introduce a User aggregate"
-    },
-    {
-      "rule": "R4",
-      "source": "app/modules/user/application/services/user_service.py",
-      "import": "app.infrastructure.database.unit_of_work",
-      "phase": "Phase 2 - depend on domain/ports/unit_of_work.py, not the concrete class"
     },
     {
       "rule": "R5",

@@ -18,7 +18,7 @@ shape, that is called out explicitly as a breaking change and justified.
 |---|---|---|---|---|
 | 0 | Baseline commit; dependency and artefact hygiene | 117 pass, 2 pre-existing fail | — | merged |
 | 1 | Layer boundary enforcement; mapper/presenter split | 128 pass, 2 pre-existing fail | 0001, 0002, 0004 | merged |
-| 2 | `UnitOfWork` port; composition-root split | — | — | pending |
+| 2 | `UnitOfWork` port; storage port consolidation | 148 pass, 2 pre-existing fail | 0001, 0003, 0004 | **in progress** |
 | 3 | `software_management` into line with its own rules | — | — | pending |
 | 4 | `security` domain model | — | — | pending |
 | 5 | `resource` domain model | — | — | pending |
@@ -131,21 +131,31 @@ $ python -m tests.architecture.layer_rules
 [ok]        R1: domain must not import fastapi/starlette/sqlalchemy/pydantic/redis/jose/httpx
 [ok]        R2: a module must not import another module's domain layer (use app.modules.shared)
 [ok]        R3: domain must not import infrastructure (ports belong in domain, implementations in infrastructure)
-[ratcheted] R4: 1 known violation(s) recorded in the ratchet -- application must not import api/schema/infrastructure
+[ratcheted] R4: 5 known violation(s) recorded in the ratchet -- application must not import api/schema/infrastructure
 [ratcheted] R5: 7 known violation(s) recorded in the ratchet -- an application service must not import an ORM model (it has no domain object)
 [ratcheted] R6: 1 known violation(s) recorded in the ratchet -- an API router must not build SQLAlchemy statements
 [ok]        R7: a module's API layer must not import another module's API layer
 ```
 
-| Rule | Statement | Baseline |
-|---|---|---|
-| R1 | domain imports no framework | 0 — hard |
-| R2 | no cross-context `domain/` imports | 6 — **fixed in this phase** |
-| R3 | domain imports no infrastructure | 0 — hard |
-| R4 | application imports no `api`/`schema`/`infrastructure` | 1 — ratcheted |
-| R5 | no service imports an ORM model | 7 — ratcheted |
-| R6 | routers build no SQLAlchemy statements | 1 — ratcheted |
-| R7 | no cross-context `api/` imports | 0 — hard |
+| Rule | Statement | Baseline | Now |
+|---|---|---|---|
+| R1 | domain imports no framework | 0 | 0 — hard |
+| R2 | no cross-context `domain/` imports | 6 | 0 — **fixed in Phase 1** |
+| R3 | domain imports no infrastructure | 0 | 0 — hard |
+| R4 | application imports no `api`/`schema`/`infrastructure` | 1 | 5 — ratcheted |
+| R5 | no service imports an ORM model | 7 | 7 — ratcheted |
+| R6 | routers build no SQLAlchemy statements | 1 | 1 — ratcheted |
+| R7 | no cross-context `api/` imports | 0 | 0 — hard |
+
+The R2 row deserves a note, because the count went *up* before it went to zero.
+Introducing the per-context `UnitOfWork` ports in Phase 2 made the shared
+`UnitOfWork` adapter and the composition root import five contexts' `domain.`
+trees, which the original rule read as a violation. Refining the rule was the
+right call rather than the code, but only because the refinement is narrow:
+`app/infrastructure/**` and `app/modules/shared/**` may import another
+context's `domain.ports` and nothing else. They may not import its entities or
+value objects, which is what keeps the Phase 1 mapper split from eroding. See
+`PORT_READERS` in `tests/architecture/layer_rules.py`.
 
 `tests/architecture/test_layer_boundaries.py` runs them in CI as a separate job
 so a boundary regression is reported as an architecture failure rather than

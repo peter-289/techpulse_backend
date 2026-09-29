@@ -1,4 +1,4 @@
-from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.resource.domain.ports.unit_of_work import ResourceUnitOfWork
 from app.exceptions.exceptions import ConflictError, NotFoundError, ValidationError
 from app.infrastructure.database.models.resource import Resource
 from app.modules.resource.resource_schema import ResourceCreate
@@ -7,7 +7,7 @@ from app.modules.resource.resource_schema import ResourceCreate
 class ResourceService:
     ALLOWED_TYPES = {"api", "knowledge", "support", "updates"}
 
-    def __init__(self, uow: UnitOfWork):
+    def __init__(self, uow: ResourceUnitOfWork):
         self.uow = uow
 
     async def list_resources(self, type_filter: str | None = None) -> list[Resource]:
