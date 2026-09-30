@@ -26,7 +26,10 @@ class DomainEvent:
     event_id: UUID = field(default_factory=uuid4)
     actor_id: UUID | None = None
 
-    occured_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # Spelled ``occurred_at`` and not ``occured_at``: the event subclasses, the
+    # audit table's column and every caller already use this spelling, and the
+    # odd one out was this field. A domain event's timestamp has one name.
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def event_type(self) -> str:

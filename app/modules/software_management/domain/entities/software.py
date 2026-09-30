@@ -178,6 +178,7 @@ class Software(AggregateRoot):
 
         self._record_event(
             SoftwarePublishedEvent(
+                aggregate_id=self.id,
                 published_at=utc_now(),
                 actor_id=self.owner_id,
             )

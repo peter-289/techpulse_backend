@@ -19,7 +19,7 @@ shape, that is called out explicitly as a breaking change and justified.
 | 0 | Baseline commit; dependency and artefact hygiene | 117 pass, 2 pre-existing fail | — | merged |
 | 1 | Layer boundary enforcement; mapper/presenter split | 128 pass, 2 pre-existing fail | 0001, 0002, 0004 | merged |
 | 2 | `UnitOfWork` port; storage port consolidation | 150 pass, 2 pre-existing fail | 0001, 0003, 0004 | merged |
-| 3 | `software_management` into line with its own rules | 165 pass, 2 pre-existing fail | 0001, 0004, 0005 | merged |
+| 3 | `software_management` into line with its own rules | 178 pass, 2 pre-existing fail | 0001, 0004, 0005 | merged |
 | 4 | `security` domain model | — | — | pending |
 | 5 | `resource` domain model | — | — | pending |
 | 6 | `user` domain model | — | — | pending |
@@ -362,15 +362,49 @@ aborts the transaction before anything commits, so there is no durable fact for 
 failure event to describe. They become meaningful if the scan is ever made
 asynchronous.
 
+### Two events could not be constructed
+
+Phase 3 made the events real, which is what exposed that two of them never
+could have been built. `DomainEvent.aggregate_id` is a required keyword-only
+field, and `Software.publish()` did not pass it:
+
+```
+TypeError: SoftwarePublishedEvent.__init__() missing 1 required keyword-only
+argument: 'aggregate_id'
+```
+
+`increment_download_count()` had the mirror problem. It passed
+`occurred_at=`, and the base field was misspelled `occured_at`. Either side of
+that pair had to change, so the typo was fixed in the base class rather than
+propagated into a twelfth call site — the event subclasses, the audit table's
+column and every other caller already spell it `occurred_at`.
+
+Neither was caught before because `publish()` and `increment_download_count()`
+had no test. Both are live: publish is the route that takes software out of
+draft, and the counter is bumped on every successful download. What the failure
+looked like from outside is worth stating plainly — the exception is raised
+*after* the command has mutated the aggregate, so the caller sees a 500 on work
+whose state change is already in memory.
+
+`test_every_recorded_event_names_the_aggregate` now runs all thirteen
+state-changing commands on `Software` and asserts each recorded event names the
+aggregate and the actor. Mutation-checked: removing the `aggregate_id` fix fails
+`publish`, restoring the typo fails `increment_download_count`.
+
+`artifact_repository.py` and `category_repository.py` gained the trailing `...`
+that the other port files in the context already had. A docstring is a valid
+function body, so this is consistency, not behaviour.
+
 ### Behaviour is unchanged
 
 | | Before | After |
 |---|---|---|
-| Tests | 150 pass, 2 pre-existing fail | 165 pass, 2 pre-existing fail |
+| Tests | 150 pass, 2 pre-existing fail | 178 pass, 2 pre-existing fail |
 | HTTP API | — | identical; route table hash identical at HEAD |
 | `list_versions` body | — | same `SoftwareVersionRead` payload |
 | Oversized upload | 400 | 400 — `StagingTooLargeError` mapped in `handlers.py` |
 | DB schema | — | identical; no migration |
+| `publish` / `increment_download_count` | `TypeError` | work; the event names the aggregate |
 
 Route table verified by re-computing it from a clean `git worktree` at HEAD and
 from the working tree: 54 method+path entries, same SHA-256.
