@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
 from app.modules.user.infrastructure.persistence.repository.session_repo import SessionRepo
 from app.modules.user.infrastructure.persistence.repository.support_chat_repo import ChatMessageRepo
-from app.modules.resource.resource_repo import ResourceRepo
+from app.modules.resource.infrastructure.persistence.repositories.resource_repo import (
+    SQLAlchemyResourceRepository,
+)
 from app.modules.security.infrastructure.persistence.repositories.audit_repo import SQLAlchemyAuditRepository
 from app.modules.software_management.infrastructure.persistence.repositories.sqlalchemy_software_repository import SQLAlchemySoftwareRepository
 from app.modules.software_management.infrastructure.persistence.repositories.category_repo import CategoryRepository
@@ -69,9 +71,9 @@ class UnitOfWork:
         return self._chat_message_repo
 
     @property
-    def resource_repo(self) -> ResourceRepo:
+    def resource_repo(self) -> SQLAlchemyResourceRepository:
         if self._resource_repo is None:
-            self._resource_repo = ResourceRepo(self.session)
+            self._resource_repo = SQLAlchemyResourceRepository(self.session)
         return self._resource_repo
     
     @property

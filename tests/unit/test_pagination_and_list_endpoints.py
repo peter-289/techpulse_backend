@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.infrastructure.database.db_setup import Base
 from app.infrastructure.database.models.resource import Resource
 from app.infrastructure.database.models.user import User
-from app.modules.resource.resource_repo import ResourceRepo
+from app.modules.resource.infrastructure.persistence.repositories.resource_repo import (
+    SQLAlchemyResourceRepository,
+)
 from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
 
 import app.infrastructure.database.models  # noqa: F401  (registers all tables)
@@ -116,7 +118,7 @@ async def test_list_resources_without_filter_returns_a_list(session) -> None:
     session.add(_resource("api", "api"))
     await session.commit()
 
-    resources = await ResourceRepo(session).list_resources()
+    resources = await SQLAlchemyResourceRepository(session).list_resources()
     assert resources is not None
     assert isinstance(resources, list)
     assert {r.slug for r in resources} == {"docs", "api"}
@@ -128,7 +130,7 @@ async def test_list_resources_filters_by_type(session) -> None:
     session.add(_resource("api", "api"))
     await session.commit()
 
-    resources = await ResourceRepo(session).list_resources(type_filter="api")
+    resources = await SQLAlchemyResourceRepository(session).list_resources(type_filter="api")
     assert [r.slug for r in resources] == ["api"]
 
 
@@ -137,4 +139,4 @@ async def test_list_resources_unknown_type_returns_empty_list(session) -> None:
     session.add(_resource("docs", "knowledge"))
     await session.commit()
 
-    assert await ResourceRepo(session).list_resources(type_filter="nope") == []
+    assert await SQLAlchemyResourceRepository(session).list_resources(type_filter="nope") == []

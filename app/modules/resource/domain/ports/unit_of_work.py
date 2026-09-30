@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from app.modules.resource.domain.ports.repositories.resource_repository import (
+    ResourceRepository,
+)
 from app.modules.shared.unit_of_work import UnitOfWorkPort
 
 
@@ -15,11 +18,6 @@ class ResourceUnitOfWork(UnitOfWorkPort, Protocol):
     """Transaction boundary for the resource context."""
 
     @property
-    def resource_repo(self) -> object:
-        """Aggregate repository for the Resource aggregate.
-
-        ``object`` until Phase 5 introduces the domain model; the concrete
-        repository currently returns ``infrastructure.database.models.Resource``
-        ORM rows.
-        """
+    def resource_repo(self) -> ResourceRepository:
+        """Aggregate repository for the Resource aggregate."""
         ...

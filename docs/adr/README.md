@@ -59,5 +59,6 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 2 | `UnitOfWork` port; storage port consolidation | 0001, 0003 |
 | 3 | `software_management` brought into line with its own rules | 0001, 0005 |
 | 4 | `security` domain model; alerts decided in the domain | 0001, 0002, 0006 |
-| 5-8 | Per-module domain models, in dependency order | 0001 |
+| 5 | `resource` domain model | 0001, 0002, 0007 |
+| 6-8 | Per-module domain models, in dependency order | 0001 |
 | 9 | Ratchet drained, tests re-enabled, docs corrected | 0004 |

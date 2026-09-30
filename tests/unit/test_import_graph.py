@@ -20,7 +20,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULES = [
     "app.modules.shared.dependencies",
     "app.infrastructure.database.unit_of_work",
-    "app.modules.resource.resource_service",
+    "app.modules.resource.application.services.resource_service",
+    "app.modules.resource.api.routers.resources_router",
+    "app.modules.resource.domain.entities.resource",
     "app.modules.software_management",
     "app.modules.security.audit_middleware",
 ]

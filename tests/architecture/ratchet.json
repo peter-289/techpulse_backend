@@ -52,12 +52,6 @@
     },
     {
       "rule": "R5",
-      "source": "app/modules/resource/resource_service.py",
-      "import": "app.infrastructure.database.models.resource",
-      "phase": "Phase 5 - introduce a Resource aggregate"
-    },
-    {
-      "rule": "R5",
       "source": "app/modules/user/application/services/support_chat_service.py",
       "import": "app.infrastructure.database.models.chat_message",
       "phase": "Phase 6 - introduce a ChatMessage entity"

@@ -49,6 +49,13 @@ from app.modules.software_management.domain.ports.storage import (
     StorageFileNotFoundError,
     StorageSecurityError,
 )
+from app.modules.resource.domain.exceptions import (
+    ResourceDomainError,
+    ResourceNotFoundError,
+    DuplicateResourceSlugError,
+    InvalidResourceTypeError,
+    ResourceRepositoryUnavailableError,
+)
 from app.modules.software_management.domain.ports.artifact_stager import (
     StagingError,
     StagingTooLargeError,
@@ -223,6 +230,31 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StagingError)
     async def _staging_error_handler(_request: Request, exc: StagingError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    # Resource failures keep the codes the shared-kernel errors produced before
+    # this context had a domain model, so no route changed behaviour.
+    @app.exception_handler(ResourceDomainError)
+    async def _resource_domain_error_handler(_request: Request, exc: ResourceDomainError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+    @app.exception_handler(ResourceNotFoundError)
+    async def _resource_not_found_handler(_request: Request, exc: ResourceNotFoundError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+
+    @app.exception_handler(DuplicateResourceSlugError)
+    async def _duplicate_resource_slug_handler(_request: Request, exc: DuplicateResourceSlugError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+    @app.exception_handler(InvalidResourceTypeError)
+    async def _invalid_resource_type_handler(_request: Request, exc: InvalidResourceTypeError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)})
+
+    # 500, not 503: a driver error used to escape as an unhandled exception and
+    # that is what the contract says. 503 would be more accurate but is an
+    # observable change, so it waits for the phase that may alter the contract.
+    @app.exception_handler(ResourceRepositoryUnavailableError)
+    async def _resource_repository_unavailable_handler(_request: Request, exc: ResourceRepositoryUnavailableError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
 
     @app.exception_handler(Exception)

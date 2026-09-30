@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class ResourceCreate(BaseModel):
@@ -19,6 +19,3 @@ class ResourceRead(BaseModel):
     description: str
     url: str | None
     created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-

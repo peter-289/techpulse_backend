@@ -21,7 +21,7 @@ shape, that is called out explicitly as a breaking change and justified.
 | 2 | `UnitOfWork` port; storage port consolidation | 150 pass, 2 pre-existing fail | 0001, 0003, 0004 | merged |
 | 3 | `software_management` into line with its own rules | 178 pass, 2 pre-existing fail | 0001, 0004, 0005 | merged |
 | 4 | `security` domain model; alerts decided in the domain | 225 pass, 2 pre-existing fail | 0001, 0002, 0004, 0006 | merged |
-| 5 | `resource` domain model | — | — | pending |
+| 5 | `resource` domain model | 266 pass, 2 pre-existing fail | 0001, 0002, 0004, 0007 | merged |
 | 6 | `user` domain model | — | — | pending |
 | 7 | `authentication`; split `dependencies.py` | — | — | pending |
 | 8 | `analytics`; `admin_router` queries | — | — | pending |
@@ -580,4 +580,141 @@ written; `http.request`, `auth.login.success`, `cookie.consent.accepted` and
 two it needs and treats the rest as uninteresting, which is correct — but a
 test pins those four as "no rule watches this", so completing the enum later
 means revisiting that test rather than being surprised by it.
+
+## Phase 5 — the `resource` domain model
+
+### Why
+
+The smallest context in the codebase, and the last one still shaped by R5. Four
+files at the context root, 185 lines, and the only R5 entry the phase was
+assigned:
+
+```
+app/modules/resource/resource_service.py -> app.infrastructure.database.models.resource
+```
+
+Worth saying up front: 185 lines is not enough code to justify much design. The
+phase was about putting the three rules that did exist somewhere defensible, and
+deleting the rest.
+
+### What moved
+
+| Was | Now |
+|---|---|
+| `resource_service.py` | `application/services/resource_service.py` |
+| `resource_repo.py` | `infrastructure/persistence/repositories/resource_repo.py` |
+| — | `infrastructure/persistence/mappers/resource_mapper.py` |
+| — | `domain/entities/resource.py` |
+| — | `domain/value_objects/resource_type.py` |
+| `resource_schema.py` | `schema/resource_schema.py` |
+| `resources_router.py` | `api/routers/resources_router.py` |
+| — | `api/presenters.py` |
+| — | `domain/ports/repositories/resource_repository.py` |
+| — | `domain/exceptions.py` |
+
+`ResourceService.ALLOWED_TYPES` — a mutable class-level set — became
+`ResourceType`, a `StrEnum` in the domain. The five inline normalizations in
+`create_resource` became `Resource.create`. The four shared-kernel errors became
+`domain/exceptions.py`, each registered in `handlers.py` against the status code
+its predecessor produced.
+
+### Moving the schema exposed a dependency that had been hidden
+
+Relocating `resource_schema.py` into `schema/` immediately tripped R4:
+
+```
+app/modules/resource/application/services/resource_service.py
+  -> app.modules.resource.schema.resource_schema
+```
+
+The import had been invisible because the schema sat at the context root, where
+R4 does not apply. It was the same latent violation Phase 1 found elsewhere: a
+file in the wrong place can mask a real coupling.
+
+Resolved the Phase 3 way — the router unpacks the payload, the use case takes
+keyword arguments:
+
+```python
+await service.create_resource(
+    title=payload.title, slug=payload.slug, resource_type=payload.type, ...
+)
+```
+
+This is an improvement independent of the layering rule. A use case that accepts
+a pydantic model is coupled to the transport's validation rules, and
+`min_length=2` on `slug` is a claim about a request, not about what a Resource
+is.
+
+### The aggregate is thin, and that is the finding
+
+`Resource` has one behaviour and no mutator, because the API exposes no edit
+route. No `delete()` either: removal is a hard `DELETE`, which is a statement
+about the row rather than a change in the resource's state, so the repository
+owns it.
+
+The conclusion worth recording is that a resource has no invariants spanning
+instances, no lifecycle and no state machine — it is closer to a typed read
+model than an aggregate root. Adding mutators for a hypothetical edit route
+would be speculative, so the phase stops at `create` and says so in the module
+docstring.
+
+### A 204 that would have become a 500
+
+The service hands the port a detached domain entity. `to_model` therefore
+produces a *transient* row, and `session.delete()` on a transient instance
+raises `InvalidRequestError: Instance is not persisted`. The repository's
+`except SQLAlchemyError` would have caught it and raised
+`ResourceRepositoryUnavailableError` — a 500 on a request that was a 204 before,
+returned with a plausible log line and no row deleted.
+
+Fixed with a statement-level delete keyed on the unique slug, which is safe
+because no foreign key references `resources`:
+
+```python
+stmt = sa_delete(ResourceModel).where(ResourceModel.slug == resource.slug)
+```
+
+Mutation-checked: reverting the implementation makes
+`test_delete_of_a_detached_entity_actually_removes_the_row` fail with the
+`InvalidRequestError`. A DELETE that silently no-ops still returns 204, so only a
+test that inspects the table catches this class of bug.
+
+### Behaviour is unchanged
+
+- 54 routes, SHA-256 `0b745ecc2ac85456fda4439434b96ccaa41d9dde6d6dd90aaf623d392b9e09ff`
+- 404 / 409 / 422 / 500 on the same failures as before, from new exception types
+- The 422 body is character-identical, including `Allowed: api, knowledge, support, updates`
+- No schema change: the entity's `resource_type` is mapped to the `type` column
+- `created_at` still comes from the database default
+- 266 pass, 2 pre-existing `search_algorithm` failures
+- Ratchet 15 → 14
+
+### Two behaviours preserved that look like bugs
+
+**A padded type is still rejected.** The service tested `payload.type.lower()`
+but stored `payload.type.strip().lower()`, so `" api "` was rejected even though
+stripping it yields a legal type. Normalizing first would widen the accepted
+set — a contract change. `ResourceType.from_input` reproduces the asymmetry,
+names it in its docstring, and a test pins it, so it cannot be discovered later
+as a bug report.
+
+**A repository failure is a 500, not a 503.** 503 is the more truthful code and
+Phase 3's port uses it, but an escaping `SQLAlchemyError` produced a 500 here.
+Changing it is observable. The comment in the repository records 503 as the
+intended follow-up.
+
+### Left alone deliberately
+
+**The list filter is not validated.** `GET /api/v1/resources?type=nope` returns
+an empty list rather than a 422, while `POST` with the same type is rejected.
+The asymmetry is pre-existing and, for a read path, arguably the better
+behaviour: the endpoint stays usable as a lookup even if a caller knows a type
+the vocabulary has since dropped. A test now pins it as deliberate.
+
+**Deletion is still a hard delete.** Soft-deleting would change what the list
+endpoint returns, which is a contract change.
+
+**`resource_repo` is reachable from the shared `UnitOfWork`** like every other
+context's. A port restricts what a service *declares*, not what the object can
+physically reach; Phase 7 or 9 is where that gets tightened if it should be.
 
