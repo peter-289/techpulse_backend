@@ -2,29 +2,38 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.shared.dependencies import get_db
 from app.modules.security.dependencies import (
     CurrentUser,
-    alert_thresholds,
     get_abuse_protection,
+    get_audit_service,
     get_current_user,
 )
 from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.application.services.audit_service import AuditService
-from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.shared.enums import CookieConsent
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
-# Get the audit service. Analytics events are written to the security context's
-# audit trail rather than a table of their own, so this is the security
-# context's service rather than a second writer with its own idea of the
-# schema. Phase 8 moves the composition of both onto shared dependencies.
-def get_service(db: AsyncSession = Depends(get_db))->AuditService:
-    uow = UnitOfWork(session=db)
-    return AuditService(uow=uow, thresholds=alert_thresholds)
+# The audit service comes from the security context's composition module rather
+# than being assembled here. Two reasons, and the first is the interesting one.
+#
+# First: analytics owns nothing. Cookie-consent decisions and client activity are
+# recorded as facts in the security context's audit trail, and this context has no
+# domain, no entities and no repositories of its own -- it is a facade over one
+# write. There is nothing for it to model, so a service of its own would either
+# be a one-line pass-through or a second place where the rules for writing an
+# audit event are stated. Asking the owning context for its own service is the
+# honest shape for a facade, and it is the only one the rules permit: R2 stops a
+# bounded context from importing another context's domain, so analytics could
+# never have wrapped `AuditService` in a service of its own without reaching
+# through its application layer.
+#
+# Second: this used to build the service here, from a concrete `UnitOfWork` and
+# the thresholds read straight off the composition module. An API router doing
+# the wiring is what Phase 7b split the composition root to stop, and no rule
+# catches it: `analytics_router.py` sits at its context root, so it is classified
+# by none of the eight layer rules.
 
 class AnalyticsEventRequest(BaseModel):
     event_type: str = Field(..., pattern="^(cookie_consent|user_activity)$")
@@ -51,7 +60,7 @@ def _safe_metadata(raw: dict | None) -> dict:
 async def capture_analytics_event(
     payload: AnalyticsEventRequest,
     request: Request,
-    service: AuditService=Depends(get_service),
+    service: AuditService = Depends(get_audit_service),
     current_user: CurrentUser = Depends(get_current_user),
     abuse_protection: AbuseProtection = Depends(get_abuse_protection),
 ):

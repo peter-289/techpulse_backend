@@ -28,6 +28,7 @@ The boundary rules described here are executable:
 | 0009 | [The User aggregate, and an explicit `save`](0009-user-aggregate-and-explicit-save.md) | Accepted |
 | 0010 | [`UserSession` is a user-context aggregate, and its writes are explicit](0010-user-session-aggregate-and-explicit-save.md) | Accepted |
 | 0011 | [One composition module per bounded context](0011-one-composition-module-per-bounded-context.md) | Accepted |
+| 0012 | [The admin API belongs to the security context, and log reading is a port](0012-admin-api-in-security-and-log-tail-port.md) | Accepted |
 
 ## Template
 
@@ -69,5 +70,5 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 6b | `user`/`User` aggregate; explicit `save` on the user repository | 0001, 0002, 0009 |
 | 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 0001, 0002, 0010 |
 | 7b | `shared.dependencies` split by context; revalidation off the ORM | 0001, 0011 |
-| 8 | `analytics`; `admin_router` queries | 0001 |
-| 9 | Ratchet drained, tests re-enabled, docs corrected | 0001, 0004 |
+| 8 | `admin_router` into `security`; `LogTail` port; ratchet drained | 0001, 0002, 0012 |
+| 9 | Routers stop constructing `UnitOfWork`; docs corrected | 0001, 0004 |

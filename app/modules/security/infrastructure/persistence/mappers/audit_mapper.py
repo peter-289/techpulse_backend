@@ -19,6 +19,7 @@ from app.infrastructure.database.models.audit_event import AuditEvent as AuditEv
 from app.infrastructure.database.models.security_alert import SecurityAlert as SecurityAlertModel
 from app.modules.security.domain.entities.audit_event import AuditEvent
 from app.modules.security.domain.entities.security_alert import SecurityAlert
+from app.modules.shared.enums import AlertRuleCode, AlertSeverity
 
 
 #: Column widths, mirrored from the ORM models. Kept as named constants so the
@@ -73,8 +74,29 @@ def event_to_entity(model: AuditEventModel) -> AuditEvent:
 
 
 def alert_to_model(alert: SecurityAlert) -> SecurityAlertModel:
-    """Map a domain ``SecurityAlert`` to its persistence row."""
+    """Map a domain ``SecurityAlert`` to its persistence row.
+
+    ``id`` is passed through so ``Session.merge`` can match the existing row,
+    exactly as ``session_mapper.to_model`` does. Without it ``merge`` sees a
+    transient instance and *inserts*: acknowledging an alert would leave the
+    original row open and add a second, acknowledged copy beside it. Nothing
+    caught that here, because until Phase 8 this mapper was only ever called for
+    alerts that did not exist yet, where the insert is the right answer.
+
+    ``created_at`` is left alone for the same reason the session mapper leaves
+    it: the column has a server default, and copying the entity's value over it
+    would overwrite the database's record of when the alert was raised with
+    whatever the in-memory object happened to hold. The hazard is concrete rather
+    than theoretical -- ``created_at`` is ``nullable=False``, so an update from an
+    entity whose ``created_at`` was never populated would fail on a
+    ``NOT NULL`` constraint, and the only reason that has not happened is that
+    every current caller builds the entity through ``raise_alert``.
+
+    ``alert_to_entity`` does read the column back, so the value the domain sees
+    after a save is the one the database recorded.
+    """
     return SecurityAlertModel(
+        id=alert.id,
         rule_code=str(alert.rule_code),
         severity=str(alert.severity),
         title=alert.title[:_TITLE_MAX_LENGTH],
@@ -85,5 +107,37 @@ def alert_to_model(alert: SecurityAlert) -> SecurityAlertModel:
         acknowledged=alert.acknowledged,
         acknowledged_at=alert.acknowledged_at,
         acknowledged_by_user_id=alert.acknowledged_by_user_id,
-        created_at=alert.created_at,
+    )
+
+
+def alert_to_entity(model: SecurityAlertModel) -> SecurityAlert:
+    """Map a persistence row to a domain ``SecurityAlert``.
+
+    Added with the operator read path in Phase 8. Every other entity in this
+    mapper round-trips through strings, so this is the first place the mapping
+    has to decide what a *typed* field reads back as: ``rule_code`` and
+    ``severity`` are ``StrEnum`` members on the entity and plain strings in the
+    column, and a caller that compared them to an enum member would otherwise
+    get a string that is equal but not the member.
+
+    The conversion is strict. A value outside the vocabulary raises rather than
+    being passed through, and that is the intended trade: the only writer of
+    this table is ``AuditService._raise_alerts_for``, which always supplies enum
+    members, so an out-of-vocabulary value means the row was written by
+    something other than this application. An alert whose code the domain cannot
+    name is not one an operator should be shown as if it were.
+    """
+    return SecurityAlert(
+        id=model.id,
+        rule_code=AlertRuleCode(model.rule_code),
+        severity=AlertSeverity(model.severity),
+        title=model.title,
+        description=model.description,
+        actor_user_id=model.actor_user_id,
+        ip_address=model.ip_address,
+        audit_event_id=model.audit_event_id,
+        acknowledged=model.acknowledged,
+        acknowledged_at=model.acknowledged_at,
+        acknowledged_by_user_id=model.acknowledged_by_user_id,
+        created_at=model.created_at,
     )

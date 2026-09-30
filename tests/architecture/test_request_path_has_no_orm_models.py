@@ -119,3 +119,60 @@ def test_shared_dependencies_is_only_the_three_genuinely_shared_providers() -> N
         f"shared/dependencies.py imports {shims}; a provider must be imported "
         "from the module that owns it, not re-exported from the kernel."
     )
+
+#: Both paths the admin router has occupied. Phase 8 moved it from the user
+#: context to the security one; listing the old path is the point. If a future
+#: change puts a query-building endpoint back under ``user/``, this names the
+#: exact place to look instead of letting the ratchet's empty file imply the
+#: problem was solved.
+ADMIN_ROUTER_PATHS = (
+    "app/modules/security/api/router/admin_router.py",
+    "app/modules/user/api/router/admin_router.py",
+)
+
+
+@pytest.mark.parametrize("relative", ADMIN_ROUTER_PATHS)
+def test_no_admin_router_reaches_the_orm(relative: str) -> None:
+    """The admin endpoints read the security context's tables.
+
+    They now do it through ``AuditService``. R6 already forbids building a
+    statement from a router, and this is the narrower companion: it fails on the
+    *import*, so a router that reaches for a model to read an attribute or
+    compare a type is caught even though it never calls ``select()``.
+    """
+    path = REPO_ROOT / relative
+    if not path.exists():
+        # The moved-away path. Nothing to check, and nothing to fail.
+        return
+    offenders = sorted(
+        target
+        for target in _imports(path)
+        if target == ORM_PACKAGE or target.startswith(ORM_PACKAGE + ".")
+    )
+    assert not offenders, f"{relative} reaches the ORM directly: {offenders}"
+
+
+def test_no_router_in_the_codebase_imports_an_orm_model() -> None:
+    """No ``*router*.py`` anywhere may import a persistence model.
+
+    Wider than the request-path list on purpose: that list exists because those
+    modules run on every request, but the reasoning is not about frequency. A
+    router that can name a row can read one, and the moment it does the domain
+    model for that concept is bypassed -- which is exactly how
+    ``app/modules/user/api/router/admin_router.py`` came to hold four
+    ``select()`` statements and a ``db.commit()`` with no service involved.
+
+    Green as of Phase 8, and deliberately so: adding an entry to
+    ``ratchet.json`` for this would mean growing a file whose stated contract is
+    that it can only shrink.
+    """
+    offenders: dict[str, list[str]] = {}
+    for path in sorted((REPO_ROOT / "app").rglob("*router*.py")):
+        found = sorted(
+            target
+            for target in _imports(path)
+            if target == ORM_PACKAGE or target.startswith(ORM_PACKAGE + ".")
+        )
+        if found:
+            offenders[path.relative_to(REPO_ROOT).as_posix()] = found
+    assert not offenders, f"routers import ORM models: {offenders}"

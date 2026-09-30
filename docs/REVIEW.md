@@ -26,7 +26,7 @@ shape, that is called out explicitly as a breaking change and justified.
 | 6b | `user`/`User` aggregate; explicit `save` on the user repository | 394 pass, 2 pre-existing fail | 0001, 0002, 0009 | merged |
 | 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 456 pass, 2 pre-existing fail | 0001, 0002, 0010 | merged |
 | 7b | split `shared/dependencies.py`; revalidation off the ORM | 471 pass, 2 pre-existing fail | 0001, 0011 | merged |
-| 8 | `analytics`; `admin_router` queries | — | — | pending |
+| 8 | `admin_router` into `security`; `LogTail` port; ratchet drained | 567 pass, 2 pre-existing fail | 0001, 0002, 0012 | merged |
 | 9 | Drain ratchet, re-enable tests, correct `ARCHITECTURE.md` | — | — | pending |
 
 The 2 failures are pre-existing on `main` and unrelated to the refactor; see
@@ -147,7 +147,7 @@ $ python -m tests.architecture.layer_rules
 | R3 | domain imports no infrastructure | 0 | 0 — hard |
 | R4 | application imports no `api`/`schema`/`infrastructure` | 1 | 0 — **fixed in Phase 6b** |
 | R5 | no service imports an ORM model | 7 | 0 — **fixed in Phase 7a** |
-| R6 | routers build no SQLAlchemy statements | 1 | 1 — `admin_router`, Phase 8 |
+| R6 | routers build no SQLAlchemy statements | 0 | 0 — **fixed in Phase 8** |
 | R7 | no cross-context `api/` imports | 0 | 0 — hard |
 | R8 | services import no web framework, ORM, or filesystem | 0 | 0 — **fixed in Phase 7a** |
 
@@ -1400,3 +1400,225 @@ is. The composition root imports them; it does not own them.
 from `app.modules.security.dependencies`, and builds its own `AuditService` from a
 concrete `UnitOfWork` rather than through `get_audit_service`. Phase 4 flagged
 this; Phase 8 owns analytics.
+
+---
+
+## Phase 8 — the last ratchet entry, and three endpoints that had never returned a row
+
+### What the file was
+
+`app/modules/user/api/router/admin_router.py`. The last ratchet entry in the
+codebase, the only file named in it, and the only file in the project that broke
+R6 by name. Five endpoints, no tests:
+
+| Method | Path |
+|---|---|
+| GET | `/api/v1/admin/alerts` |
+| PATCH | `/api/v1/admin/alerts/{alert_id}/ack` |
+| GET | `/api/v1/admin/audit-events` |
+| GET | `/api/v1/admin/cookie-activity` |
+| GET | `/api/v1/admin/logs` |
+
+It was in the wrong module, and that was not incidental. The tables it reads are
+the security context's — `SecurityAlert` and `AuditEvent`, both modelled in Phase
+4 — and R2 forbids one context from naming another's domain layer. So from the
+user context the router had no port to ask, the ORM models were its only route to
+the data, and it built four `select()` statements and called `db.commit()` itself.
+R4 could not have applied either: there was no application service in the path to
+be the thing that was wrong.
+
+### The bug the tests found, first
+
+All three list endpoints had **never returned a row**. Each ended in
+
+```python
+alerts = result.scalars().all()
+return {"count": len(alerts), "items": [AlertModelResponse.model_validate(a) for a in alerts]}
+```
+
+`.all()` returns a `Sequence`, and iterating it a second time yields nothing. So
+an operator asking for open alerts got `200` with `{"count": 3, "items": []}` —
+and `count` was *correct*, which is what kept it from being noticed. There was no
+test, and the response shape is exactly what a broken endpoint looks like from the
+outside.
+
+`tests/unit/test_admin_api.py` was written against the old code first. Ten of its
+24 tests failed; those ten were the three list endpoints. That is the number worth
+remembering: the phase did not begin with a bug found by reading, it began with a
+bug found by asking.
+
+### What changed
+
+The router moved to `app/modules/security/api/router/admin_router.py` — the
+context that owns the data. R7 forbids one context's API layer from importing
+another's, so keeping the file in `user/` and injecting a security service would
+have traded one rule for another; the location and the data access were the same
+decision.
+
+Reads go through `AuditRepository`, in its own language: `get_alert`,
+`list_alerts`, `list_events`. `AuditService` gained the matching three. The two
+lists run on `uow.read_only()`; acknowledgement runs on the write boundary, so the
+change and the decision commit together. `test_audit_read_path.py` records which
+boundary each one opened, because "a read that accidentally commits" and "a write
+that forgot to" are invisible in a test that only checks a return value.
+
+Acknowledgement now calls `SecurityAlert.acknowledge` instead of
+`update(SecurityAlertModel)`. `save_alert` uses `Session.merge`.
+
+### The two defects the phase found in its own new code
+
+**`merge` was inserting a second alert.** `alert_to_model` did not pass `id`, on
+the reasoning that its only caller created new alerts — true until Phase 8, and
+false the moment an endpoint acknowledges one. Without the primary key `merge`
+sees a transient instance and *inserts*: acknowledging an alert left the original
+row open and added a second, acknowledged copy beside it. The endpoint test caught
+it by noticing the returned id was not the one it asked for.
+`test_acknowledging_updates_the_row_instead_of_adding_a_second_one` now asserts
+the consequence, which is the thing that matters: the table does not grow.
+
+**`created_at` was being written on update.** The mapper's own docstring said the
+column was left alone for the same reason `session_mapper.to_model` leaves it,
+and the code did the opposite. The docstring was right: `created_at` is
+`nullable=False` with a `server_default`, so copying an entity's value over it is
+one unpopulated entity away from a constraint violation, and even when populated
+it rewrites when the alert fired every time an operator opened it. Removed.
+
+### Log reading, and the redaction
+
+`LogTail` is a port in the security context; `FileLogTail` is its adapter. The
+port's contract is not "returns lines" but "returns lines that are safe to send to
+a browser", which is why redaction lives in the adapter — an implementation
+returning raw lines would satisfy the signature and break the promise.
+
+Writing the tests one pattern at a time, as the adapter's docstring said they
+should be written, immediately paid for itself. The first version of the pattern
+covered `key=value` and `key: value` and nothing else:
+
+```
+{"password": "hunter2", "user": "alice"}   ->  unchanged
+{"access_token": "eyJhbGciOi.payload"}    ->  unchanged
+client_secret=sk-live-1234                 ->  unchanged
+```
+
+A closing quote between the key and the colon defeats a pattern that expects
+`:` there. JSON is how most logging libraries emit a structured field, and a
+single test with one long log line would have passed. It is now one pattern for
+the key family and one for `Authorization` headers, both quoted-value aware, and
+`test_a_redacted_json_line_is_still_valid_json` holds the line to its own shape —
+`{"password": "[REDACTED]"}` is still a document, which matters to whatever parses
+the file next.
+
+Three bugs in that pattern were found by mutation check rather than by reading,
+and the third is the one worth recording: the `head` group closed at the first
+alternation branch, so the `:` and the value had both fallen outside it. The code
+ran, returned 200, and removed the separator and the value together.
+
+### Analytics
+
+`analytics_router` now takes `AuditService` through `Depends(get_audit_service)`
+instead of building it from a concrete `UnitOfWork`. Flagged in Phase 4, recorded
+in Phase 7b, closed here.
+
+### The ratchet
+
+`ratchet.json` holds `"violations": []` — empty. R6 was the only entry and it is
+gone with the file that caused it, so all eight rules are now hard. The file
+itself stays, with the entry removed in the same commit as the phase, because the
+instruction *do not add an entry here* is only worth something if there is an
+obvious place to add one instead.
+
+```
+[ok] R1  domain imports no framework, ORM or driver
+[ok] R2  no context imports another's domain
+[ok] R3  no domain-to-infrastructure
+[ok] R4  no application-to-infrastructure
+[ok] R5  no ORM model in an application service
+[ok] R6  no SQLAlchemy statement in a router
+[ok] R7  no api-to-api
+[ok] R8  no framework, ORM or filesystem in a service
+```
+
+`test_request_path_has_no_orm_models.py` gained two guards, both green rather
+than ratcheted: a parametrised one over **both** paths the admin router has
+occupied, so a future `user/` router that grows a `select()` names the exact place
+to look; and a codebase-wide one asserting no `*router*.py` imports an ORM model.
+The second is wider than the request-path list on purpose — the reasoning is not
+about frequency but that a router which can name a row can read one.
+
+### Mutation checks
+
+Every claim above that a test enforces was checked by breaking the code and
+confirming the test failed. Twelve mutations, ten caught. The two that survived
+were the id tiebreaks on `list_alerts` and `list_events`, and being unable to test
+them was the finding:
+
+- A covering-index scan over `created_at` returns equal keys in **descending
+  rowid** order on SQLite, so a test asserting the returned order passed with the
+  tiebreak deleted. The tiebreak is a property of the *statement*, so
+  `test_a_tied_page_of_alerts_has_a_fixed_order` now asserts on the compiled SQL
+  through a recording session. It is a white-box test, and the docstring says why
+  it has to be.
+- The production database is PostgreSQL, where a seq-scan-and-sort leaves the tie
+  order unspecified. The tiebreak is what makes a refreshed triage list show the
+  same page twice.
+
+### A `.gitignore` that would have shipped a broken commit
+
+`.gitignore` line 9 was `logs`, unanchored, so it matched *any* directory named
+`logs` at any depth — including `app/modules/security/infrastructure/logs/`. The
+adapter would not have been committed while `LogTail`, `get_log_tail` and the
+tests importing it all were, and the failure would have been an `ImportError` on
+a clean checkout rather than anything a local run would show. Anchored to
+`/logs/` and the package re-included.
+
+This is worth writing down as a class: the Phase 7b review recorded that the
+route-table hash was computed over a list that excluded two entries, so the
+"byte-identical" claim was checking a smaller surface than it claimed. Both are
+cases of a check that passes because it is looking at the wrong thing.
+
+### Contract
+
+Preserved exactly. Route table byte-identical to Phase 7b, verified by diffing
+against a `git worktree` at HEAD rather than against a recorded hash.
+
+- Five paths, five methods, unchanged
+- 401 unauthenticated, 403 non-admin, unchanged
+- `count` is the returned page size, not the total matching rows — unchanged, and
+  now tested rather than incidental
+- All three acknowledgement outcomes remain 200; not-found still omits `alert_id`
+- Null audit metadata is still exposed as `{}`
+- `log_file` and `lines_requested` still in the logs response
+
+**Changed, deliberately:** the three list endpoints now return rows. An operator
+who asked for alerts and received an empty list now receives the alerts. This is
+the only client-visible behaviour change in the phase, and it is the bug.
+
+### Not changed, on purpose
+
+- 567 pass, 2 pre-existing `search_algorithm` failures
+- `alert_to_entity` converts `rule_code` and `severity` strictly. A row holding a
+  value outside the vocabulary raises instead of being displayed. The only writer
+  is `AuditService._raise_alerts_for`, so this means "written by something other
+  than this application", and an alert whose code the domain cannot name is not
+  one to show as if it were.
+
+### Left alone deliberately
+
+**Five routers still construct a concrete `UnitOfWork`** — `auth_router`,
+`resources_router`, `category_router`, `support_chat_router`, `user_router`. This
+is the pattern the phase set out to remove, and it is now the largest remaining
+instance of it in the codebase. A rule banning it needs five ratchet entries, and
+growing a file whose stated contract is that it can only shrink is the wrong
+trade in the phase that empties it. Phase 9.
+
+**`analytics_router` still imports `CurrentUser`, `get_current_user` and
+`get_abuse_protection` from the security context.** Consuming another context's
+composition root is not what R2 or R7 forbid, and unwiring it means giving
+analytics its own view of the principal. Out of scope here; the `UnitOfWork` half
+is done.
+
+**`LogTail` is synchronous underneath an `async` signature.** `FileLogTail.tail`
+hops to a worker thread because a large log on a slow disk would otherwise block
+the event loop. `test_the_read_happens_off_the_event_loop_thread` asserts the hop
+happens; it cannot assert that the hop was worth it, which is a judgement about
+file sizes this project has not hit yet.

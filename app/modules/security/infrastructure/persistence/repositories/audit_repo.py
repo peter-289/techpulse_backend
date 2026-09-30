@@ -24,6 +24,7 @@ from app.modules.security.domain.entities.security_alert import SecurityAlert
 from app.modules.security.domain.exceptions import AuditRepositoryUnavailableError
 from app.modules.security.domain.ports.repositories.audit_repository import AuditRepository
 from app.modules.security.infrastructure.persistence.mappers.audit_mapper import (
+    alert_to_entity,
     alert_to_model,
     event_to_entity,
     event_to_model,
@@ -38,6 +39,13 @@ class SQLAlchemyAuditRepository(AuditRepository):
     Never commits or rolls back: the UnitOfWork owns the transaction. ``flush``
     is enough to obtain the autoincrement ids that an alert's foreign key needs,
     and committing here would let an alert outlive the event that raised it.
+
+    The read methods added in Phase 8 (``get_alert``, ``list_alerts``,
+    ``list_events``) exist because two admin endpoints used to issue their own
+    statements against these tables from a router. They are deliberately shaped
+    like the counting methods -- the caller states what it wants in words and
+    this class owns the ``WHERE`` -- and they return entities, so nothing above
+    the repository sees a ``SecurityAlertModel``.
     """
 
     def __init__(self, session: AsyncSession) -> None:
@@ -98,18 +106,74 @@ class SQLAlchemyAuditRepository(AuditRepository):
             raise AuditRepositoryUnavailableError("Failed to check for existing alert.") from exc
 
     async def save_alert(self, alert: SecurityAlert) -> SecurityAlert:
-        """Insert a security alert and return it carrying its assigned id."""
+        """Insert or update a security alert and return the stored row.
+
+        ``merge`` rather than ``add``, so this is one call for both the raise
+        path and acknowledgement. ``add`` on a row that already has a primary key
+        attempts an ``INSERT`` against it, which is how acknowledging an alert
+        through this repository would have failed had Phase 8 not changed it --
+        the previous version was only ever called with a brand-new alert, so the
+        update case had never been exercised. ``merge`` inserts when ``id`` is
+        ``None`` and updates when it is set.
+        """
         try:
-            model = alert_to_model(alert)
-            self.session.add(model)
+            model = await self.session.merge(alert_to_model(alert))
             await self.session.flush()
-            alert.id = model.id
-            return alert
+            return alert_to_entity(model)
         except SQLAlchemyError as exc:
             logger.error(
                 "Failed to persist security alert (%s): %s", alert.rule_code, exc, exc_info=False
             )
             raise AuditRepositoryUnavailableError("Failed to persist security alert.") from exc
+
+    async def get_alert(self, alert_id: int) -> SecurityAlert | None:
+        """Load one alert, or ``None`` when no row has that id."""
+        try:
+            model = await self.session.get(SecurityAlertModel, alert_id)
+            return alert_to_entity(model) if model is not None else None
+        except SQLAlchemyError as exc:
+            logger.error("Failed to load security alert %s: %s", alert_id, exc, exc_info=False)
+            raise AuditRepositoryUnavailableError("Failed to load security alert.") from exc
+
+    async def list_alerts(
+        self, *, only_unacknowledged: bool = False, limit: int
+    ) -> list[SecurityAlert]:
+        """Newest alerts first, optionally only the ones nobody has taken."""
+        try:
+            stmt = select(SecurityAlertModel).order_by(
+                SecurityAlertModel.created_at.desc(), SecurityAlertModel.id.desc()
+            )
+            if only_unacknowledged:
+                stmt = stmt.where(SecurityAlertModel.acknowledged.is_(False))
+            result = await self.session.execute(stmt.limit(limit))
+            return [alert_to_entity(model) for model in result.scalars().all()]
+        except SQLAlchemyError as exc:
+            logger.error("Failed to list security alerts: %s", exc, exc_info=False)
+            raise AuditRepositoryUnavailableError("Failed to list security alerts.") from exc
+
+    async def list_events(
+        self,
+        *,
+        event_types: tuple[str, ...] | None = None,
+        actor_user_id: str | None = None,
+        limit: int,
+    ) -> list[AuditEvent]:
+        """Newest events first, narrowed by type and actor when given."""
+        try:
+            stmt = select(AuditEventModel)
+            if event_types is not None:
+                stmt = stmt.where(AuditEventModel.event_type.in_(event_types))
+            if actor_user_id is not None:
+                stmt = stmt.where(AuditEventModel.actor_user_id == actor_user_id)
+            result = await self.session.execute(
+                stmt.order_by(
+                    AuditEventModel.occurred_at.desc(), AuditEventModel.id.desc()
+                ).limit(limit)
+            )
+            return [event_to_entity(model) for model in result.scalars().all()]
+        except SQLAlchemyError as exc:
+            logger.error("Failed to list audit events: %s", exc, exc_info=False)
+            raise AuditRepositoryUnavailableError("Failed to list audit events.") from exc
 
     @staticmethod
     def _count_predicates(*, actor_user_id: str | None, ip_address: str | None) -> tuple:

@@ -375,7 +375,10 @@ def rule_application_depends_only_inward() -> Rule:
     ``app.infrastructure.database``. Phase 2 moves those onto per-module domain
     ports.
 
-    Ratcheted. Known violations are recorded in ``ratchet.json``.
+    Hard rule as of Phase 8, which drained the ratchet: no entry, zero
+    violations. It was the most-violated rule when the ratchet was introduced
+    (six application services reaching for ``app.infrastructure``), so it was
+    the one most at risk of being read as negotiable.
     """
     violations = []
     for path in _python_files():
@@ -400,7 +403,10 @@ def rule_services_do_not_use_orm_models() -> Rule:
     ``infrastructure.database.models`` is treating the persistence record as
     its domain object, which means no domain model exists for that concept.
 
-    Ratcheted. Two known violations: UserService and SupportChatService.
+    Hard rule as of Phase 8, which drained the ratchet. The two exceptions this
+    was written for -- ``UserService`` and ``SupportChatService`` -- were removed
+    in Phases 6b and 6a when each context got a domain model to read instead of
+    a row.
     """
     violations = []
     for path in _python_files():
@@ -425,7 +431,16 @@ def rule_routers_do_not_build_queries() -> Rule:
     ``select()`` in a handler is not: it is repository work done in the
     transport layer, bypassing both the application and domain layers.
 
-    Ratcheted. One known violation: admin_router.
+    Hard rule as of Phase 8, which drained the ratchet by moving ``admin_router``
+    into the security context -- the context that owns ``SecurityAlert`` and
+    ``AuditEvent``. The entry was a structural consequence of that router living
+    in the user context, where R2 left it no port to ask and the ORM models as
+    its only way to read the trail; see ``docs/adr/0012``.
+
+    Note what this rule does not cover, because the gap is deliberate and
+    recorded in ``docs/REVIEW.md``: a router may still construct the concrete
+    ``UnitOfWork`` (five do), and it may still name a model without building a
+    statement. Both are Phase 9's.
     """
     violations = []
     for path in _python_files():

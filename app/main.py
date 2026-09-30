@@ -21,7 +21,7 @@ from app.modules.authentication.auth_router import router as auth_router
 from app.modules.user.api.router.support_chat_router import router as support_chat_router
 
 from app.modules.resource.api.routers.resources_router import router as resource_router
-from app.modules.user.api.router.admin_router import router as admin_router
+from app.modules.security.api.router.admin_router import router as admin_router
 from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.software_management.api.routers.software_router import router as software_management_router
 from app.modules.software_management.api.routers.category_router import router as category_router

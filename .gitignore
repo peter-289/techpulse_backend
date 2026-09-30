@@ -8,6 +8,15 @@
 # Logs
 logs
 *.log
+# `logs` above is unanchored, so it matches any directory with that name at any
+# depth -- including the source package added in Phase 8 at
+# app/modules/security/infrastructure/logs/, which the commit would then have
+# left out while every import of it stayed in. Anchoring the ignore to the
+# repository root is what the rule meant: one runtime log directory.
+# Re-include the package, and the re-inclusion needs the parent directory
+# un-ignored too, because git does not descend into an excluded directory.
+/logs/
+!app/modules/security/infrastructure/logs/
 
 # Cache
 .cache

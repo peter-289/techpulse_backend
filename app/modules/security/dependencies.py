@@ -35,6 +35,8 @@ from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.application.services.audit_service import AuditService
 from app.modules.security.domain.ports.alert_thresholds import AlertThresholds
+from app.modules.security.domain.ports.log_tail import LogTail
+from app.modules.security.infrastructure.logs.file_log_tail import FileLogTail
 from app.modules.security.token_manager import (
     AccessTokenClaims,
     credentials_exception,
@@ -247,3 +249,17 @@ def get_audit_service(
     thresholds: AlertThresholds = Depends(get_audit_thresholds),
 ) -> AuditService:
     return AuditService(uow=unit_of_work, thresholds=thresholds)
+
+
+# === GET LOG TAIL ===
+# The operator log view. The path is read here rather than in the handler
+# because it is configuration, and the adapter is told the file to read instead
+# of being handed a settings object: this is the same shape as the storage
+# provider, and it keeps `app.core.config` out of the module that does the I/O.
+#
+# Built per request rather than once at import, unlike `alert_thresholds`. That
+# is a deliberate asymmetry -- a path cannot change while a threshold could --
+# and it is here because a process-wide `FileLogTail` would freeze the path at
+# import time, which is the one thing that makes a settings override untestable.
+def get_log_tail() -> LogTail:
+    return FileLogTail(settings.LOG_FILE_PATH)
