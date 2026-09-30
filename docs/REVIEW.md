@@ -23,8 +23,7 @@ shape, that is called out explicitly as a breaking change and justified.
 | 4 | `security` domain model; alerts decided in the domain | 225 pass, 2 pre-existing fail | 0001, 0002, 0004, 0006 | merged |
 | 5 | `resource` domain model | 266 pass, 2 pre-existing fail | 0001, 0002, 0004, 0007 | merged |
 | 6a | `user`/support-chat: ChatMessage entity, AI provider port | 308 pass, 2 pre-existing fail | 0001, 0002, 0004, 0008 | merged |
-| 6b | `user`/`User` aggregate — blocked, see below | — | — | pending |
-| 6 | `user` domain model | — | — | pending |
+| 6b | `user`/`User` aggregate; explicit `save` on the user repository | 394 pass, 2 pre-existing fail | 0001, 0002, 0009 | merged |
 | 7 | `authentication`; split `dependencies.py` | — | — | pending |
 | 8 | `analytics`; `admin_router` queries | — | — | pending |
 | 9 | Drain ratchet, re-enable tests, correct `ARCHITECTURE.md` | — | — | pending |
@@ -133,10 +132,11 @@ $ python -m tests.architecture.layer_rules
 [ok]        R1: domain must not import fastapi/starlette/sqlalchemy/pydantic/redis/jose/httpx
 [ok]        R2: a module must not import another module's domain layer (use app.modules.shared)
 [ok]        R3: domain must not import infrastructure (ports belong in domain, implementations in infrastructure)
-[ratcheted] R4: 5 known violation(s) recorded in the ratchet -- application must not import api/schema/infrastructure
-[ratcheted] R5: 7 known violation(s) recorded in the ratchet -- an application service must not import an ORM model (it has no domain object)
+[ok]        R4: application must not import api/schema/infrastructure
+[ratcheted] R5: 2 known violation(s) recorded in the ratchet -- an application service must not import an ORM model (it has no domain object)
 [ratcheted] R6: 1 known violation(s) recorded in the ratchet -- an API router must not build SQLAlchemy statements
 [ok]        R7: a module's API layer must not import another module's API layer
+[ratcheted] R8: 2 known violation(s) recorded in the ratchet -- an application service must not import the web framework, the ORM, or the filesystem
 ```
 
 | Rule | Statement | Baseline | Now |
@@ -144,10 +144,11 @@ $ python -m tests.architecture.layer_rules
 | R1 | domain imports no framework | 0 | 0 — hard |
 | R2 | no cross-context `domain/` imports | 6 | 0 — **fixed in Phase 1** |
 | R3 | domain imports no infrastructure | 0 | 0 — hard |
-| R4 | application imports no `api`/`schema`/`infrastructure` | 1 | 5 — ratcheted |
-| R5 | no service imports an ORM model | 7 | 7 — ratcheted |
-| R6 | routers build no SQLAlchemy statements | 1 | 1 — ratcheted |
+| R4 | application imports no `api`/`schema`/`infrastructure` | 1 | 0 — **fixed in Phase 6b** |
+| R5 | no service imports an ORM model | 7 | 2 — `auth_service` only, Phase 7 |
+| R6 | routers build no SQLAlchemy statements | 1 | 1 — `admin_router`, Phase 8 |
 | R7 | no cross-context `api/` imports | 0 | 0 — hard |
+| R8 | services import no web framework, ORM, or filesystem | 0 | 2 — `auth_service` only, Phase 7 |
 
 The R2 row deserves a note, because the count went *up* before it went to zero.
 Introducing the per-context `UnitOfWork` ports in Phase 2 made the shared
@@ -823,34 +824,12 @@ is used.
 - 308 pass, 2 pre-existing `search_algorithm` failures
 - Ratchet 14 → 10
 
-### Why Phase 6b is blocked
-
-`users` is not a bounded context here. `user_repo` is reached by `auth_service`,
-`verification_recovery` and `superuser_seeder`, and the first two mutate rows it
-returns, relying on session autoflush to persist the change:
-
-| Site | Mutation | With detached entities |
-|---|---|---|
-| `auth_service.py:98` | `user.password_hash = verified_hash` | rehash-on-login stops silently |
-| `auth_service.py:123` | `user_acc.status = VERIFIED` | accounts never verify — lockout |
-| `auth_service.py:218` | `user.password_hash = ...` | reset succeeds, old password still works |
-| `verification_recovery.py:45-48, 76-78` | 4 retry fields | unbounded retry loop |
-
-All four fail *silently* — 200/201 returned, write gone. And nothing would catch
-them: `test_auth_hardening.py` drives `AuthService` with fake repositories and
-never exercises a real `UserRepo` write path.
-
-6b starts with integration tests over a real database for those four flows, then
-converts. The alternative — explicit save operations plus seven rewritten mutation
-sites in the authentication context — is Phase 7's work, since 7 owns
-`auth_service` anyway. `UserUnitOfWork.user_repo` and `session_repo` stay
-annotated `object` with the reason in their docstrings.
-
 ### Left alone deliberately
 
-**`rules.py` has two dead functions.** `check_by_email` and `check_by_username`
-have zero call sites. They belong to the `User` aggregate work, so they are
-recorded here rather than deleted in a phase about support chat.
+**`rules.py` had three dead functions.** `check_by_email` and `check_by_username`
+had zero call sites; `map_integrity_error` lost its only caller in Phase 6b, when
+the user repository took over translating `IntegrityError`. All three are deleted
+in Phase 6b, which is where the first two were assigned.
 
 **`SupportAIUnavailableError` → 503 is registered but unreachable.** The service
 catches it, exactly as it caught the `ExternalServiceError` it replaced, so the
@@ -859,3 +838,166 @@ client still gets 201. Registered for parity.
 **`follow_redirects=True` is set explicitly on the client.** `httpx` defaults to
 not following redirects and `requests` did follow them. Preserving the old
 behaviour is cheaper than assuming no provider redirects.
+
+## Phase 6b — the `User` aggregate, and five writes that were vanishing
+
+### What was actually broken
+
+The Phase 6a review deferred this conversion on the grounds that returning
+detached entities before making every write explicit would break five paths. Those
+five were not hypothetical. Each mutated a row the repository handed back and
+relied on session autoflush, and each failed *silently* — a 200 or 201 went back
+and the write was gone:
+
+| Site | Mutation | Symptom if made implicit |
+|---|---|---|
+| `auth_service.py:98` | `user.password_hash = verified_hash` | Argon2 rehash-on-login stops; cost upgrades never reach users |
+| `auth_service.py:123` | `user_acc.status = VERIFIED` | accounts never verify — lockout |
+| `auth_service.py:218` | `user.password_hash = ...` | reset returns 200, old password still works |
+| `verification_recovery.py:45-48, 76-78` | 4 retry fields | unbounded verification-email retry |
+| `superuser_seeder.py` | `role`, `status`, `password_hash` | admin seeding reports success and changes nothing |
+
+`test_auth_hardening.py` could not have caught any of them: it drives
+`AuthService` with fake repositories, so no test exercised a real `UserRepo`
+write.
+
+### The safety net, and proving it bites
+
+`tests/integration/test_user_write_paths.py` runs against real SQLite through a
+real `UnitOfWork` and **reads back through a second session**. That detail is the
+point: a passing test then means the change was committed, not merely flushed.
+
+It was written before any production line changed, and proven to bite by
+detaching rows inside the repository's lookups. After the conversion it was
+proven again from the other direction — deleting all five `save()` calls:
+
+```
+FAILED test_rehashing_on_login_is_persisted
+FAILED test_verifying_an_account_is_persisted
+FAILED test_a_password_reset_is_persisted
+FAILED test_marking_a_verification_email_sent_is_persisted
+FAILED test_marking_a_verification_email_failed_is_persisted
+5 failed, 4 passed
+```
+
+A test that cannot fail is not a safety net, so it was checked from both sides.
+
+### `save` uses `merge`, and that is asserted
+
+The port returns detached entities, so `save` uses `Session.merge` — `add` would
+attempt an `INSERT` against an existing primary key. Two repository tests count
+rows after saving (`test_updates_in_place_instead_of_inserting`,
+`test_works_on_an_entity_loaded_by_a_previous_session`) because "insert or update"
+is the entire question this method answers.
+
+### The seeder was the interesting caller
+
+R2 stops infrastructure importing another context's entities, so the seeder could
+not have hand-built an account once the aggregate existed. But the reason to
+change it was already there: the seeder constructed a `User` with
+`status=VERIFIED, role=ADMIN` inline, while `register` said a new account starts
+`UNAPPROVED`/`USER`. Two places spelling out "what does a new account start as" is
+how they drift.
+
+Seeding an account is a use case, so it became one — `UserService.ensure_superuser`.
+The seeder now reads configuration and decides *whether* to seed; the user context
+decides *what* a seeded account is. A username and an email belonging to different
+accounts is reported as `CONFLICT` and nothing is written, because that is a
+configuration error rather than something to resolve.
+
+### Three incidental improvements
+
+**The client IP is a string.** `create_user` took a `fastapi.Request` only to call
+`AbuseProtection.get_client_ip(request)`. The router reads the IP at the transport
+edge and passes a `str`. That is what removed the `fastapi` and
+`fastapi.concurrency` imports — not a lint fix, a genuine separation.
+
+**Hashing no longer holds a connection open.** Argon2 is deliberately slow, and
+the old code opened a write transaction *first*, then validated the password and
+hashed inside it — holding a pooled connection for 100–300ms per registration.
+Both now happen before the transaction opens. `run_in_threadpool` became
+`asyncio.to_thread`, which is what it always was.
+
+**Driver errors are translated where the driver is.** `DuplicateUserError` and
+`UserRepositoryUnavailableError` are raised by the repository, so the application
+no longer imports `sqlalchemy.exc` to be safe. Status codes are unchanged:
+
+| Domain error | Replaces | Status |
+|---|---|---|
+| `UserNotFoundError` | `NotFoundError` | 404 |
+| `DuplicateUserError` | `ConflictError` | 409 |
+| `UserRepositoryUnavailableError` | escaping driver error | 500 |
+
+500 and not 503 for the last one, because that is what an escaping driver error
+produced before this phase — the same call Phase 6a made for the chat repository.
+
+### `list_users` lost a dead parameter
+
+It had two cursors: `cursor`, a `created_at` upper bound, and `before_id`,
+keyset pagination on the id. `cursor` had no caller since the router moved to
+keyset. Two pagination schemes on one method is how they start disagreeing, so it
+went. The route was already keyset-only, so no HTTP behaviour changed; the
+existing pagination test was updated, and the implicit-`None` bug it was written
+to catch is now unrepresentable rather than merely tested against.
+
+### The route table is a test now
+
+Every prior phase re-checked the route table by hand at the end. That is exactly
+the kind of check that gets skipped once, so it is
+`tests/architecture/test_public_http_surface.py`. It was verified byte-identical
+against a clean `HEAD` worktree of Phase 6a, then mutation-checked by renaming
+`/users/me` to `/users/profile` — the test named both the addition and the
+removal.
+
+It pins method, path, and declared success status. It cannot catch a request or
+response schema change; those remain covered by the per-context tests. It is here
+because a refactor that quietly moves a route between contexts is otherwise
+invisible — the code moves, the tests keep passing, and only a client notices.
+
+### Behaviour is unchanged
+
+- Route table byte-identical to Phase 6a, verified against a clean worktree
+- 404 for a missing account, 409 for a taken username or email, as before
+- Registration still stores submitted values without normalizing them
+- Passwords still Argon2-hashed; accounts still start `UNAPPROVED`/`USER`
+- No schema change
+- 394 pass, 2 pre-existing `search_algorithm` failures
+- Ratchet 10 → 5
+
+### Remaining ratchet, and who owns it
+
+| Entry | Owner |
+|---|---|
+| R5 ×2, R8 ×2 — all `auth_service.py` | Phase 7 |
+| R6 ×1 — `admin_router.py` | Phase 8 |
+
+`UserUnitOfWork.user_repo` is now typed. `session_repo` stays `object` until
+Phase 7, which is the context that mutates those rows the same way.
+
+### Left alone deliberately
+
+**`auth_service` calls entity methods the port does not name.** It receives a
+`User` through a `UserRepository`-typed property and calls `verify()`,
+`set_password_hash()`, and `apply_verified_password_hash()`. The protocol
+describes persistence, not those capabilities, so the service depends on the
+concrete implementation rather than on the port. The alternative — a port that
+names the capability — belongs to Phase 7, which owns `auth_service`.
+
+**A forgotten `save` is still silent at runtime.** It is no longer silent in the
+test suite: the five sites that exist are pinned. A sixth added later needs its
+own test, or a lint rule for methods that mutate an entity in place.
+
+**`admin_router` still reads both ORM models** and builds queries — the R6 entry
+that Phase 8 owns.
+
+**Registration still stores what was submitted.** The entity does not normalize
+`full_name`, `username`, or `email`, and the authentication context normalizes
+separately for lookup. The asymmetry is real but predates this refactor; storing
+normalized values now would silently change what existing rows mean. The test
+`test_registration_does_not_normalize_its_inputs` pins the current behaviour so a
+future fix is a deliberate change.
+
+**`verification_email_last_error` is truncated in the mapper, not the domain.** The
+column is `String(500)` and SQLite does not enforce it, so on Postgres an over-long
+SMTP error would turn a bookkeeping write into a 500. The domain stores the message
+whole and the mapper fits it to the column, which is where the width is known.

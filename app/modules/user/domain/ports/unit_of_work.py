@@ -16,6 +16,7 @@ from typing import Protocol, runtime_checkable
 from app.modules.user.domain.ports.repository.chat_message_repository import (
     ChatMessageRepository,
 )
+from app.modules.user.domain.ports.repository.user_repository import UserRepository
 from app.modules.shared.unit_of_work import UnitOfWorkPort
 
 
@@ -24,14 +25,14 @@ class UserUnitOfWork(UnitOfWorkPort, Protocol):
     """Transaction boundary for the user context."""
 
     @property
-    def user_repo(self) -> object:
+    def user_repo(self) -> UserRepository:
         """Aggregate repository for the User aggregate.
 
-        Still ``object``. Phase 6b introduces the aggregate, and it is not a
-        mechanical change: ``auth_service`` and ``verification_recovery`` both
-        mutate rows this repository hands them and rely on session autoflush to
-        persist the change. Returning detached entities would make those writes
-        vanish. See ``docs/REVIEW.md``.
+        Entities come back detached, so a caller that mutates one must call
+        ``save``. ``auth_service``, ``verification_recovery`` and the superuser
+        seeder each did this implicitly before; all of them now save explicitly,
+        and ``tests/integration/test_user_write_paths.py`` pins every write path
+        that was silently lossy.
         """
         ...
 
@@ -39,9 +40,8 @@ class UserUnitOfWork(UnitOfWorkPort, Protocol):
     def session_repo(self) -> object:
         """Aggregate repository for UserSession.
 
-        Typed as ``object`` until Phase 7 introduces a UserSession domain
-        model; ``auth_service`` mutates these rows the same way it mutates user
-        rows.
+        Still ``object``: Phase 7 introduces the UserSession model and converts
+        the remaining implicit-flush writes in ``auth_service``.
         """
         ...
 

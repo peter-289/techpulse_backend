@@ -1,8 +1,14 @@
 """Pagination and list-endpoint regression tests.
 
 Guards two implicit-``None`` returns: ``UserRepo.list_users`` returned ``None``
-whenever ``cursor`` was ``None``, and ``ResourceRepo.list_resources`` returned
-``None`` whenever no type filter was supplied. Both turned into 500s.
+whenever its optional cursor was ``None``, and ``ResourceRepo.list_resources``
+returned ``None`` whenever no type filter was supplied. Both turned into 500s.
+
+Phase 6b removed the ``cursor`` parameter itself. It was a ``created_at``
+upper bound, and ``list_users`` had grown a second cursor (``before_id``) with
+different semantics; no caller had used ``cursor`` since the router switched to
+keyset pagination. The cursor-less regression is kept below, and the ``None`` bug
+is now unrepresentable rather than merely tested against.
 """
 
 from __future__ import annotations
@@ -17,7 +23,9 @@ from app.infrastructure.database.models.user import User
 from app.modules.resource.infrastructure.persistence.repositories.resource_repo import (
     SQLAlchemyResourceRepository,
 )
-from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
+from app.modules.user.infrastructure.persistence.repository.user_repo import (
+    SQLAlchemyUserRepository,
+)
 
 import app.infrastructure.database.models  # noqa: F401  (registers all tables)
 
@@ -50,9 +58,9 @@ async def _seed_users(db, count: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_users_without_cursor_returns_a_list(session) -> None:
+async def test_list_users_without_before_id_returns_a_list(session) -> None:
     await _seed_users(session, 3)
-    users = await UserRepo(session).list_users(cursor=None, limit=10)
+    users = await SQLAlchemyUserRepository(session).list_users(before_id=None, limit=10)
     assert users is not None
     assert isinstance(users, list)
     assert len(users) == 3
@@ -60,27 +68,27 @@ async def test_list_users_without_cursor_returns_a_list(session) -> None:
 
 @pytest.mark.asyncio
 async def test_list_users_with_no_arguments_returns_a_list(session) -> None:
-    users = await UserRepo(session).list_users()
+    users = await SQLAlchemyUserRepository(session).list_users()
     assert users == []
 
 
 @pytest.mark.asyncio
 async def test_list_users_orders_by_id_descending(session) -> None:
     await _seed_users(session, 5)
-    users = await UserRepo(session).list_users(limit=5)
+    users = await SQLAlchemyUserRepository(session).list_users(limit=5)
     assert [u.id for u in users] == sorted((u.id for u in users), reverse=True)
 
 
 @pytest.mark.asyncio
 async def test_list_users_honours_limit(session) -> None:
     await _seed_users(session, 5)
-    assert len(await UserRepo(session).list_users(limit=2)) == 2
+    assert len(await SQLAlchemyUserRepository(session).list_users(limit=2)) == 2
 
 
 @pytest.mark.asyncio
 async def test_list_users_keyset_pages_without_overlap(session) -> None:
     await _seed_users(session, 5)
-    repo = UserRepo(session)
+    repo = SQLAlchemyUserRepository(session)
 
     first = await repo.list_users(limit=2)
     assert len(first) == 2
@@ -96,7 +104,7 @@ async def test_list_users_keyset_pages_without_overlap(session) -> None:
 @pytest.mark.asyncio
 async def test_list_users_clamps_out_of_range_limits(session) -> None:
     await _seed_users(session, 2)
-    repo = UserRepo(session)
+    repo = SQLAlchemyUserRepository(session)
     # A limit below 1 is clamped up to 1 rather than returning an empty page.
     assert len(await repo.list_users(limit=0)) == 1
     assert len(await repo.list_users(limit=-5)) == 1

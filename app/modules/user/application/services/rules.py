@@ -1,22 +1,20 @@
-from app.exceptions.exceptions import ConflictError, DomainError
+"""Registration input rules.
 
-def check_by_email(user) -> None:
-    if user:
-        raise ConflictError("Email already exists!")
-    return None
-    
+``check_by_email``, ``check_by_username`` and ``map_integrity_error`` used to live
+here. All three were dead:
 
-def check_by_username(user) -> None:
-    if user:
-        raise ConflictError("Username already exixts!")
-    return None
+* the two ``check_by_*`` helpers have had zero call sites since before this
+  refactor began;
+* ``map_integrity_error`` stopped being used when the user repository took over
+  translating ``IntegrityError`` into ``DuplicateUserError``, which is the only
+  place the driver is visible.
 
-def map_integrity_error(message: str) -> ConflictError:
-    if "username" in message:
-        return ConflictError("Username already exists!")
-    if "email" in message:
-        return ConflictError("Email already exists!")
+They are deleted rather than left as dead code. Password strength validation is
+kept, and is shared: both this context's ``UserService`` and the authentication
+context's password-reset flow enforce the same policy.
+"""
 
+from app.exceptions.exceptions import DomainError
 
 # ============== VALIDATE PASSWORD ====================
 # Password strength validation

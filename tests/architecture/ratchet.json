@@ -21,12 +21,6 @@
   ],
   "violations": [
     {
-      "rule": "R4",
-      "source": "app/modules/user/application/services/user_service.py",
-      "import": "app.infrastructure.database.models.user",
-      "phase": "Phase 6 - introduce a User aggregate"
-    },
-    {
       "rule": "R5",
       "source": "app/modules/authentication/auth_service.py",
       "import": "app.infrastructure.database.models.session",
@@ -37,12 +31,6 @@
       "source": "app/modules/authentication/auth_service.py",
       "import": "app.infrastructure.database.models.user",
       "phase": "Phase 7 - consume the User aggregate from the user context's port"
-    },
-    {
-      "rule": "R5",
-      "source": "app/modules/user/application/services/user_service.py",
-      "import": "app.infrastructure.database.models.user",
-      "phase": "Phase 6 - introduce a User aggregate"
     },
     {
       "rule": "R6",
@@ -61,24 +49,6 @@
       "source": "app/modules/authentication/auth_service.py",
       "import": "sqlalchemy.exc",
       "phase": "Phase 7 - let the repository translate SQLAlchemy errors"
-    },
-    {
-      "rule": "R8",
-      "source": "app/modules/user/application/services/user_service.py",
-      "import": "fastapi",
-      "phase": "Phase 6 - return a domain read model; the API layer presents it"
-    },
-    {
-      "rule": "R8",
-      "source": "app/modules/user/application/services/user_service.py",
-      "import": "fastapi.concurrency",
-      "phase": "Phase 6 - use asyncio.to_thread instead of the FastAPI thread pool"
-    },
-    {
-      "rule": "R8",
-      "source": "app/modules/user/application/services/user_service.py",
-      "import": "sqlalchemy.exc",
-      "phase": "Phase 6 - let the repository translate SQLAlchemy errors"
     }
   ]
 }

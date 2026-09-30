@@ -44,10 +44,20 @@ async def register_user(
     payload: UserCreate,
     background_tasks: BackgroundTasks,
     service: UserService = Depends(get_service),
-    auth_service: AuthService = Depends(get_auth_service)
-    ):
- 
-    user = await service.create_user(request, payload=payload)
+    auth_service: AuthService = Depends(get_auth_service),
+    abuse_protection: AbuseProtection = Depends(get_abuse_protection),
+):
+    # The client IP is read here, at the transport edge. The service used to take
+    # the whole ``Request`` and call ``get_client_ip`` itself, which is what
+    # pulled FastAPI into the application layer.
+    user = await service.create_user(
+        full_name=payload.full_name,
+        username=payload.username,
+        email=payload.email,
+        password=payload.password,
+        gender=payload.gender,
+        client_ip=abuse_protection.get_client_ip(request),
+    )
     try:
         auth_service.enqueue_verification_email(background_tasks, payload=user)
         logger.info("User registered successfully", extra={"user_id": user.id, "email": user.email})

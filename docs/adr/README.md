@@ -23,6 +23,9 @@ The boundary rules described here are executable:
 | 0004 | [Enforce layer boundaries with a ratchet](0004-enforce-layer-boundaries-with-a-ratchet.md) | Accepted |
 | 0005 | [Stage uploads behind a port, and make domain events real](0005-stage-uploads-behind-a-port-and-make-domain-events-real.md) | Accepted |
 | 0006 | [Give the security context a domain model, and decide alerts in the domain](0006-security-domain-model-and-alert-decisions.md) | Accepted |
+| 0007 | [Give the resource context a domain model](0007-resource-domain-model.md) | Accepted |
+| 0008 | [Support chat gets a port, and the blocking call goes away with it](0008-support-chat-ai-port.md) | Accepted |
+| 0009 | [The User aggregate, and an explicit `save`](0009-user-aggregate-and-explicit-save.md) | Accepted |
 
 ## Template
 
@@ -61,5 +64,6 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 4 | `security` domain model; alerts decided in the domain | 0001, 0002, 0006 |
 | 5 | `resource` domain model | 0001, 0002, 0007 |
 | 6a | `user`/support chat: ChatMessage entity, AI provider port | 0001, 0002, 0008 |
-| 6b-8 | Per-module domain models, in dependency order | 0001 |
+| 6b | `user`/`User` aggregate; explicit `save` on the user repository | 0001, 0002, 0009 |
+| 7-8 | Per-module domain models, in dependency order | 0001 |
 | 9 | Ratchet drained, tests re-enabled, docs corrected | 0004 |

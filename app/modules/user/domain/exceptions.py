@@ -1,9 +1,14 @@
 """User-context domain errors.
 
-Empty until Phase 6. The user context's failures still surface as shared-kernel
-errors from ``app.exceptions.exceptions``; the ``User`` aggregate that would own
-them is deferred to Phase 6b, and the support-chat errors below are registered in
-``app.exceptions.handlers`` against the status codes their predecessors produced.
+Each replacement below is registered in ``app.exceptions.handlers`` against the
+*same* status code the shared-kernel error it replaces produced, so no route
+changed behaviour:
+
+    NotFoundError  (404) -> UserNotFoundError    (404)
+    ConflictError  (409) -> DuplicateUserError   (409)
+    unhandled      (500) -> ...RepositoryUnavailableError (500)
+
+See ``docs/adr/0009-user-aggregate``.
 """
 
 from __future__ import annotations
@@ -11,6 +16,14 @@ from __future__ import annotations
 
 class UserDomainError(Exception):
     """Base for every error the user context raises."""
+
+
+class UserNotFoundError(UserDomainError):
+    """No account exists for the requested id."""
+
+
+class DuplicateUserError(UserDomainError):
+    """The username or email is already registered."""
 
 
 class ChatMessageDomainError(UserDomainError):
@@ -27,6 +40,14 @@ class ChatMessageTooShortError(ChatMessageDomainError):
 
 class ChatMessageRepositoryUnavailableError(ChatMessageDomainError):
     """The chat store could not be reached.
+
+    Mapped to 500, not 503, because that is what an escaping driver error
+    produced before the port existed.
+    """
+
+
+class UserRepositoryUnavailableError(UserDomainError):
+    """The user store could not be reached.
 
     Mapped to 500, not 503, because that is what an escaping driver error
     produced before the port existed.

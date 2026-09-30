@@ -1,15 +1,27 @@
+"""Seeds the configured superuser account at startup.
+
+The decision-making moved to ``UserService.ensure_superuser``. This used to
+build a ``User`` and hand-compare usernames against emails inline, which meant two
+places spelling out "a new account starts as UNAPPROVED with role USER" -- and
+the seeder's copy said otherwise. It is also no longer possible here: the seeder
+is infrastructure, and R2 stops infrastructure importing another context's
+entities, so a hand-rolled account was never going to survive the User aggregate.
+
+What stays is the part that is genuinely this script's: reading configuration and
+deciding whether seeding should happen at all.
+"""
+
 import logging
+
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.concurrency import run_in_threadpool
-import uuid
 
 from app.core.config import settings
-from app.modules.security.password_manager import hash_password
-from app.modules.shared.enums import GenderEnum, RoleEnum, UserStatus
-from app.infrastructure.database.models.user import User
-from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
-
+from app.infrastructure.database.unit_of_work import UnitOfWork
+from app.modules.user.application.services.user_service import (
+    SuperuserResult,
+    UserService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +30,7 @@ async def seed_superuser(session: AsyncSession) -> None:
     if not settings.SUPERUSER_SEED_ENABLED:
         logger.info("[startup] Superuser seeding disabled")
         return
-    
+
     required = [settings.SUPERUSER_USERNAME, settings.SUPERUSER_EMAIL, settings.SUPERUSER_PASSWORD]
     if not all(item and item.strip() for item in required):
         logger.warning(
@@ -26,65 +38,39 @@ async def seed_superuser(session: AsyncSession) -> None:
             "SUPERUSER_EMAIL, SUPERUSER_PASSWORD."
         )
         return
-    
-    repo = UserRepo(session)
+
+    service = UserService(uow=UnitOfWork(session=session), abuse_protection=None)
 
     username = settings.SUPERUSER_USERNAME.strip()
     email = settings.SUPERUSER_EMAIL.strip().lower()
-    full_name = (settings.SUPERUSER_FULL_NAME).strip()
+    full_name = settings.SUPERUSER_FULL_NAME.strip()
 
     try:
-        user_by_username = await repo.get_user_by_username(username)
-        user_by_email = await repo.get_user_by_email(email)
-
-        if (
-            user_by_username
-            and user_by_email
-            and user_by_username.id != user_by_email.id
-        ):
-            logger.error(
-                "[startup] Superuser seed conflict: username %s and email %s "
-                "belong to different users.",
-                username,
-                email,
-            )
-            return
-
-        user = user_by_username or user_by_email
-
-        if user is None:
-            user = User(
-                id=str(uuid.uuid4()),
-                full_name=full_name,
-                username=username,
-                email=email,
-                gender=GenderEnum.PREFER_NOT_TO_SAY,
-                password_hash=await run_in_threadpool(hash_password, settings.SUPERUSER_PASSWORD),
-                status=UserStatus.VERIFIED,
-                role=RoleEnum.ADMIN,
-            )
-            await repo.add_user(user)
-            await session.commit()
-            print(f"[+] Seeded superuser account: {username}")
-            logger.info("[startup] Seeded superuser account: %s", username)
-            return
-
-        dirty = False
-        if user.role != RoleEnum.ADMIN:
-            user.role = RoleEnum.ADMIN
-            dirty = True
-        if user.status != UserStatus.VERIFIED:
-            user.status = UserStatus.VERIFIED
-            dirty = True
-        if settings.SUPERUSER_UPDATE_PASSWORD_ON_STARTUP:
-            user.password_hash = await run_in_threadpool(hash_password, settings.SUPERUSER_PASSWORD)
-            dirty = True
-
-        if dirty:
-            await session.commit()
-            logger.info("[startup] Updated existing superuser account: %s", user.username)
-        else:
-            logger.info("[startup] Superuser already present: %s", user.username)
-    except SQLAlchemyError as exc:
+        result = await service.ensure_superuser(
+            username=username,
+            email=email,
+            full_name=full_name,
+            password=settings.SUPERUSER_PASSWORD,
+            update_password=settings.SUPERUSER_UPDATE_PASSWORD_ON_STARTUP,
+        )
+    except SQLAlchemyError:
         await session.rollback()
-        logger.exception("[startup] Superuser seeding failed: %s", exc)
+        logger.exception("[startup] Superuser seeding failed")
+        return
+
+    if result.outcome is SuperuserResult.CONFLICT:
+        logger.error(
+            "[startup] Superuser seed conflict: username %s and email %s "
+            "belong to different users.",
+            result.username,
+            result.email,
+        )
+        return
+
+    if result.outcome is SuperuserResult.CREATED:
+        print(f"[+] Seeded superuser account: {result.username}")
+        logger.info("[startup] Seeded superuser account: %s", result.username)
+    elif result.outcome is SuperuserResult.UPDATED:
+        logger.info("[startup] Updated existing superuser account: %s", result.username)
+    else:
+        logger.info("[startup] Superuser already present: %s", result.username)

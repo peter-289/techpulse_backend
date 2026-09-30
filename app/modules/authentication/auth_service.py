@@ -94,8 +94,8 @@ class AuthService:
                     raise DomainError("Email not approved")
              
                 # Opportunistically upgrade hash parameters on successful login.
-                if verified_hash != user.password_hash:
-                    user.password_hash = verified_hash
+                if user.apply_verified_password_hash(verified_hash):
+                    await self.uow.user_repo.save(user)
         except DomainError:
             raise UnauthorizedError("Invalid username or password")
         except SQLAlchemyError as e: 
@@ -120,7 +120,8 @@ class AuthService:
             if not user_acc:
                 raise UnauthorizedError("No account associated with this user.")
             # Mark account as verified
-            user_acc.status = UserStatus.VERIFIED
+            user_acc.verify()
+            await self.uow.user_repo.save(user_acc)
     
 
     # Enqueue a verification email           
@@ -215,7 +216,8 @@ class AuthService:
             user = await self.uow.user_repo.get_user_by_id(payload["user_id"])
             if not user:
                 raise UnauthorizedError("Invalid token")
-            user.password_hash = await run_in_threadpool(hash_password, new_password)
+            user.set_password_hash(await run_in_threadpool(hash_password, new_password))
+            await self.uow.user_repo.save(user)
             await self.uow.session_repo.revoke_user_sessions(
                 user_id=user.id,
                 revoked_at=datetime.now(timezone.utc),

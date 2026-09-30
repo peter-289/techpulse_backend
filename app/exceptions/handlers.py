@@ -51,6 +51,9 @@ from app.modules.software_management.domain.ports.storage import (
 )
 from app.modules.user.domain.exceptions import (
     UserDomainError,
+    UserNotFoundError,
+    DuplicateUserError,
+    UserRepositoryUnavailableError,
     ChatMessageDomainError,
     ChatMessageTooShortError,
     ChatMessageRepositoryUnavailableError,
@@ -281,6 +284,20 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ChatMessageRepositoryUnavailableError)
     async def _chat_message_repository_unavailable_handler(_request: Request, exc: ChatMessageRepositoryUnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    # Users: 404 for a missing account and 409 for a taken username or email are
+    # the codes the shared-kernel NotFoundError and ConflictError produced.
+    @app.exception_handler(UserNotFoundError)
+    async def _user_not_found_handler(_request: Request, exc: UserNotFoundError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
+
+    @app.exception_handler(DuplicateUserError)
+    async def _duplicate_user_handler(_request: Request, exc: DuplicateUserError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+    @app.exception_handler(UserRepositoryUnavailableError)
+    async def _user_repository_unavailable_handler(_request: Request, exc: UserRepositoryUnavailableError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
 
     # 503 for parity with the ExternalServiceError this replaced. Unreachable in

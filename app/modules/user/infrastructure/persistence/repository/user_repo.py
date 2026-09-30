@@ -1,97 +1,115 @@
-# ==== MODULAR VERSION ======
-from app.infrastructure.database.models.user import User
-from app.modules.shared.enums import UserStatus
-from app.exceptions.exceptions import ConflictError
+"""SQLAlchemy implementation of the user repository port.
 
-from uuid import UUID
-from typing import Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+The notable change from the previous version is that reads return detached domain
+entities, so nothing a caller does to one reaches the database until
+:meth:`save`. ``add_user`` also translates the driver's ``IntegrityError`` into a
+domain error here rather than in the application service, which is what clears
+the service's last two R8 entries.
+"""
+
+from __future__ import annotations
+
+import logging
 from datetime import datetime
-from sqlalchemy.exc import IntegrityError
 
-class UserRepo:
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.infrastructure.database.models.user import User as UserModel
+from app.modules.user.domain.entities.user import User
+from app.modules.user.domain.exceptions import (
+    DuplicateUserError,
+    UserRepositoryUnavailableError,
+)
+from app.modules.user.infrastructure.persistence.mappers.user_mapper import (
+    to_domain,
+    to_model,
+)
+from app.modules.shared.enums import UserStatus
+
+logger = logging.getLogger(__name__)
+
+#: Matches the ``list_users`` limit ceiling the previous implementation applied.
+_MAX_PAGE_SIZE = 200
+
+
+class SQLAlchemyUserRepository:
+    """Adapts ``AsyncSession`` to :class:`UserRepository`."""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def add_user(self, user: User)->User:
-        """
-        Docstring for add_user
-     
-        :param self: References class instance
-        :param user: A user object to be saved
-        :type user: User
-        :return: Returns a user object that has been saved
-        :rtype: User
+    # === writes ===
+
+    async def add_user(self, user: User) -> User:
+        model = to_model(user)
+        try:
+            self.db.add(model)
+            await self.db.flush()
+            await self.db.refresh(model)
+        except IntegrityError as exc:
+            raise DuplicateUserError("Email or username already exists!") from exc
+        except SQLAlchemyError as exc:
+            logger.warning("User insert failed: %s", exc, exc_info=True)
+            raise UserRepositoryUnavailableError("User storage unavailable") from exc
+        return to_domain(model)
+
+    async def save(self, user: User) -> User:
+        """Persist a loaded account's changes.
+
+        ``merge`` rather than ``add``: the entity is detached, so the session has
+        never seen it, and ``add`` would try to INSERT a row whose primary key
+        already exists. ``merge`` copies the entity's state onto the tracked row,
+        and the enclosing Unit of Work commits.
+
+        Returns the entity with database defaults applied, so a caller that
+        passes a freshly registered user gets its timestamps back.
         """
         try:
-
-            self.db.add(user)
+            model = await self.db.merge(to_model(user))
             await self.db.flush()
-            await self.db.refresh(user)
-        except IntegrityError:
-            raise ConflictError("Email or username already exists!")
+            await self.db.refresh(model)
+        except IntegrityError as exc:
+            raise DuplicateUserError("Email or username already exists!") from exc
+        except SQLAlchemyError as exc:
+            logger.warning("User save failed: %s", exc, exc_info=True)
+            raise UserRepositoryUnavailableError("User storage unavailable") from exc
+        user.created_at = model.created_at
+        user.updated_at = model.updated_at
         return user
-    
-    async def get_user_by_id(self, id: UUID)->Optional[User]:
-        """
-        Docstring for get_user
-        
-        :param self: References class instance
-        :param id: An integer to identify user
-        :type id: UUID
-        :return: Returns a user object
-        :rtype: User | None
-        """
-        user = await self.db.get(User, str(id))
-        return user
-    
-    async def get_user_by_username(self, username: str)->Optional[User]:
-        """
-        Docstring for get_user_by_username
-        
-        :param self: Reference to the class instance
-        :param username: A users username
-        :type username: str
-        :return: Return a matched user or none
-        :rtype: User | None
-        """
-        stmt = select(User).where(User.username == username)
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    async def get_user_by_email(self, email: str)-> Optional[User]:
-        """
-        Get user by email.
-        """
-        stmt = select(User).where(User.email == email)
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
 
-    async def list_users(
-        self,
-        cursor: datetime | None = None,
-        limit: int = 100,
-        before_id: str | None = None,
-    ) -> list[User]:
-        """Return a page of users ordered by id (descending).
+    # === reads ===
 
-        Keyset pagination: pass ``before_id`` (the last id of the previous page)
-        to fetch the next page. ``cursor`` is accepted for backwards
-        compatibility and applied as a ``created_at`` upper bound.
+    async def get_user_by_id(self, user_id: str) -> User | None:
+        return to_domain_or_none(await self.db.get(UserModel, str(user_id)))
 
-        Always returns a list. The previous implementation returned ``None``
-        implicitly whenever ``cursor`` was ``None``.
+    async def get_user_by_username(self, username: str) -> User | None:
+        stmt = select(UserModel).where(UserModel.username == username)
+        return to_domain_or_none(await self._one(stmt))
+
+    async def get_user_by_email(self, email: str) -> User | None:
+        stmt = select(UserModel).where(UserModel.email == email)
+        return to_domain_or_none(await self._one(stmt))
+
+    async def list_users(self, limit: int = 100, before_id: str | None = None) -> list[User]:
+        """Return a page of accounts, highest id first.
+
+        Keyset pagination on the primary key. The previous signature also
+        accepted a ``cursor`` datetime used as a ``created_at`` upper bound; it
+        had no caller outside this module and is gone, so the two ways of
+        paginating the same listing cannot disagree with each other.
         """
-        limit = max(1, min(int(limit), 200))
-        stmt = select(User).order_by(User.id.desc()).limit(limit)
+        limit = max(1, min(int(limit), _MAX_PAGE_SIZE))
+        stmt = select(UserModel).order_by(UserModel.id.desc()).limit(limit)
         if before_id is not None:
-            stmt = stmt.where(User.id < before_id)
-        elif cursor is not None:
-            stmt = stmt.where(User.created_at < cursor)
-        result = await self.db.execute(stmt)
-        return list(result.scalars().all())
-
+            stmt = stmt.where(UserModel.id < before_id)
+        try:
+            result = await self.db.execute(stmt)
+        except SQLAlchemyError as exc:
+            logger.warning("User listing failed: %s", exc, exc_info=True)
+            raise UserRepositoryUnavailableError("User storage unavailable") from exc
+        return [to_domain(model) for model in result.scalars().all()]
 
     async def list_users_pending_verification_email_retry(
         self,
@@ -100,20 +118,40 @@ class UserRepo:
         max_retry_count: int,
         limit: int = 100,
     ) -> list[User]:
+        """Return unverified accounts that are due a verification resend.
+
+        Mirrors :meth:`User.is_due_for_verification_resend` in SQL, plus the
+        age and retry ceilings the worker imposes.
+        """
         stmt = (
-            select(User)
-            .where(User.status != UserStatus.VERIFIED)
-            .where(User.created_at <= created_before)
-            .where(User.verification_email_retry_count < max_retry_count)
+            select(UserModel)
+            .where(UserModel.status != UserStatus.VERIFIED)
+            .where(UserModel.created_at <= created_before)
+            .where(UserModel.verification_email_retry_count < max_retry_count)
             .where(
                 or_(
-                    User.verification_email_last_sent_at.is_(None),
-                    User.verification_email_next_retry_at <= now,
+                    UserModel.verification_email_next_retry_at.is_(None),
+                    UserModel.verification_email_next_retry_at <= now,
                 )
             )
-            .order_by(User.created_at.asc())
+            .order_by(UserModel.created_at.asc())
             .limit(limit)
         )
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-        
+        try:
+            result = await self.db.execute(stmt)
+        except SQLAlchemyError as exc:
+            logger.warning("User retry listing failed: %s", exc, exc_info=True)
+            raise UserRepositoryUnavailableError("User storage unavailable") from exc
+        return [to_domain(model) for model in result.scalars().all()]
+
+    async def _one(self, stmt) -> object:
+        try:
+            result = await self.db.execute(stmt)
+        except SQLAlchemyError as exc:
+            logger.warning("User lookup failed: %s", exc, exc_info=True)
+            raise UserRepositoryUnavailableError("User storage unavailable") from exc
+        return result.scalar_one_or_none()
+
+
+def to_domain_or_none(model: UserModel | None) -> User | None:
+    return to_domain(model) if model is not None else None

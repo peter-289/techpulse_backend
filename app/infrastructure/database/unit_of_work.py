@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
+from app.modules.user.infrastructure.persistence.repository.user_repo import (
+    SQLAlchemyUserRepository,
+)
 from app.modules.user.infrastructure.persistence.repository.session_repo import SessionRepo
 from app.modules.user.infrastructure.persistence.repository.chat_message_repo import (
     SQLAlchemyChatMessageRepository,
@@ -55,9 +57,9 @@ class UnitOfWork:
         
 
     @property
-    def user_repo(self)-> UserRepo:
+    def user_repo(self) -> SQLAlchemyUserRepository:
         if self._user_repo is None:
-            self._user_repo = UserRepo(self.session)
+            self._user_repo = SQLAlchemyUserRepository(self.session)
         return self._user_repo
 
     @property

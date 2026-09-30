@@ -8,7 +8,6 @@ from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.token_manager import TokenManager
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.db_setup import SessionLocal
-from app.modules.shared.enums import UserStatus
 from app.infrastructure.email.email_service.email_service import send_verification_email
 from app.modules.shared.dependencies import get_redis
 
@@ -40,12 +39,10 @@ async def mark_verification_email_sent(user_id: int, sent_at: datetime | None = 
             user = await uow.user_repo.get_user_by_id(user_id)
             if not user:
                 return
-            if user.status == UserStatus.VERIFIED:
+            if user.is_verified:
                 return
-            user.verification_email_last_sent_at = now
-            user.verification_email_retry_count = 0
-            user.verification_email_next_retry_at = None
-            user.verification_email_last_error = None
+            user.record_verification_email_sent(now)
+            await uow.user_repo.save(user)
     finally:
        await db.close()
 
@@ -64,7 +61,7 @@ async def mark_verification_email_failed(
             user = await uow.user_repo.get_user_by_id(user_id)
             if not user:
                 return
-            if user.status == UserStatus.VERIFIED:
+            if user.is_verified:
                 return
 
             retry_count = (
@@ -73,9 +70,12 @@ async def mark_verification_email_failed(
                 else (user.verification_email_retry_count or 0) + 1
             )
             delay_seconds = compute_recovery_delay_seconds(retry_count=retry_count)
-            user.verification_email_retry_count = retry_count
-            user.verification_email_last_error = (error_message or "")[:500]
-            user.verification_email_next_retry_at = now + timedelta(seconds=delay_seconds)
+            user.record_verification_email_failure(
+                error_message=error_message or "",
+                next_retry_at=now + timedelta(seconds=delay_seconds),
+                retry_count=retry_count,
+            )
+            await uow.user_repo.save(user)
     finally:
         await db.close()
 
@@ -102,7 +102,7 @@ async def process_unverified_users_once() -> None:
                     "retry_count": user.verification_email_retry_count or 0,
                 }
                 for user in users
-                if user.status != UserStatus.VERIFIED
+                if not user.is_verified
             ]
     finally:
        await db.close()

@@ -26,7 +26,7 @@ from app.core.config import settings
 from app.exceptions.exceptions import UnauthorizedError
 from app.infrastructure.database.db_setup import Base
 import app.infrastructure.database.models  # noqa: F401  (registers all tables)
-from app.infrastructure.database.models.user import User
+from app.modules.user.domain.entities.user import User
 from app.modules.authentication import auth_service as auth_service_module
 from app.modules.security.token_manager import (
     ACCESS_TOKEN_TYPE,
@@ -98,6 +98,9 @@ async def test_login_timing_is_independent_of_account_existence() -> None:
 
         async def get_user_by_username(self, username):
             return self._value
+
+        async def save(self, user):
+            raise AssertionError("no save expected: the hash did not change")
 
     class _SessionRepo:
         async def revoke_user_sessions(self, **kwargs):
