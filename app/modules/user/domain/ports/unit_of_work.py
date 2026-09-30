@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from app.modules.user.domain.ports.repository.chat_message_repository import (
+    ChatMessageRepository,
+)
 from app.modules.shared.unit_of_work import UnitOfWorkPort
 
 
@@ -24,10 +27,11 @@ class UserUnitOfWork(UnitOfWorkPort, Protocol):
     def user_repo(self) -> object:
         """Aggregate repository for the User aggregate.
 
-        ``object`` because the User domain model does not exist yet; the
-        concrete repository still returns ORM rows. Phase 6 introduces the
-        aggregate and narrows this annotation to a real
-        ``UserRepository`` protocol.
+        Still ``object``. Phase 6b introduces the aggregate, and it is not a
+        mechanical change: ``auth_service`` and ``verification_recovery`` both
+        mutate rows this repository hands them and rely on session autoflush to
+        persist the change. Returning detached entities would make those writes
+        vanish. See ``docs/REVIEW.md``.
         """
         ...
 
@@ -35,15 +39,13 @@ class UserUnitOfWork(UnitOfWorkPort, Protocol):
     def session_repo(self) -> object:
         """Aggregate repository for UserSession.
 
-        Typed as ``object`` for the same reason as ``user_repo``: Phase 6
-        introduces a UserSession domain model.
+        Typed as ``object`` until Phase 7 introduces a UserSession domain
+        model; ``auth_service`` mutates these rows the same way it mutates user
+        rows.
         """
         ...
 
     @property
-    def chat_message_repo(self) -> object:
-        """Repository for support ChatMessage.
-
-        Typed as ``object`` until Phase 6 introduces the entity.
-        """
+    def chat_message_repo(self) -> ChatMessageRepository:
+        """Repository for support ChatMessage."""
         ...

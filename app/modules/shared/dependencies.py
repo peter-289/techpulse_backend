@@ -27,6 +27,8 @@ from .enums import RoleEnum, UserStatus
 from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.application.services.audit_service import AuditService
 from app.modules.security.domain.ports.alert_thresholds import AlertThresholds
+from app.infrastructure.external_apis.ai_support.http_support_ai import HttpSupportAI
+from app.modules.user.domain.ports.support_ai import SupportAI, SupportAIConfig
 from app.modules.security.token_manager import (
     ACCESS_TOKEN_TYPE,
     EMAIL_VERIFICATION_TOKEN_TYPE,
@@ -451,6 +453,21 @@ def get_audit_service(
     thresholds: AlertThresholds = Depends(get_audit_thresholds),
 ) -> AuditService:
     return AuditService(uow=unit_of_work, thresholds=thresholds)
+
+
+# === GET SUPPORT AI ===
+# The only place that reads the AI provider's settings. The service receives a
+# ``SupportAI`` and cannot see the endpoint, the key or the model; it supplies
+# the system prompt itself, because that is support policy rather than
+# configuration.
+def get_support_ai() -> SupportAI:
+    return HttpSupportAI(
+        SupportAIConfig(
+            base_url=settings.AI_BASE_URL,
+            api_key=settings.AI_API_KEY,
+            model=settings.SUPPORT_CHAT_MODEL,
+        )
+    )
 
 
 

@@ -22,18 +22,6 @@
   "violations": [
     {
       "rule": "R4",
-      "source": "app/modules/user/application/services/support_chat_service.py",
-      "import": "app.core.config",
-      "phase": "Phase 6 - inject the AI provider configuration"
-    },
-    {
-      "rule": "R4",
-      "source": "app/modules/user/application/services/support_chat_service.py",
-      "import": "app.infrastructure.database.models.chat_message",
-      "phase": "Phase 6 - introduce a ChatMessage entity"
-    },
-    {
-      "rule": "R4",
       "source": "app/modules/user/application/services/user_service.py",
       "import": "app.infrastructure.database.models.user",
       "phase": "Phase 6 - introduce a User aggregate"
@@ -49,12 +37,6 @@
       "source": "app/modules/authentication/auth_service.py",
       "import": "app.infrastructure.database.models.user",
       "phase": "Phase 7 - consume the User aggregate from the user context's port"
-    },
-    {
-      "rule": "R5",
-      "source": "app/modules/user/application/services/support_chat_service.py",
-      "import": "app.infrastructure.database.models.chat_message",
-      "phase": "Phase 6 - introduce a ChatMessage entity"
     },
     {
       "rule": "R5",
@@ -79,12 +61,6 @@
       "source": "app/modules/authentication/auth_service.py",
       "import": "sqlalchemy.exc",
       "phase": "Phase 7 - let the repository translate SQLAlchemy errors"
-    },
-    {
-      "rule": "R8",
-      "source": "app/modules/user/application/services/support_chat_service.py",
-      "import": "requests",
-      "phase": "Phase 6 - call the AI provider through a port"
     },
     {
       "rule": "R8",

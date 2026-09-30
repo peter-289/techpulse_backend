@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.user.infrastructure.persistence.repository.user_repo import UserRepo
 from app.modules.user.infrastructure.persistence.repository.session_repo import SessionRepo
-from app.modules.user.infrastructure.persistence.repository.support_chat_repo import ChatMessageRepo
+from app.modules.user.infrastructure.persistence.repository.chat_message_repo import (
+    SQLAlchemyChatMessageRepository,
+)
 from app.modules.resource.infrastructure.persistence.repositories.resource_repo import (
     SQLAlchemyResourceRepository,
 )
@@ -65,9 +67,9 @@ class UnitOfWork:
         return self._session_repo
 
     @property
-    def chat_message_repo(self) -> ChatMessageRepo:
+    def chat_message_repo(self) -> SQLAlchemyChatMessageRepository:
         if self._chat_message_repo is None:
-            self._chat_message_repo = ChatMessageRepo(self.session)
+            self._chat_message_repo = SQLAlchemyChatMessageRepository(self.session)
         return self._chat_message_repo
 
     @property

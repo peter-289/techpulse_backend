@@ -23,6 +23,8 @@ MODULES = [
     "app.modules.resource.application.services.resource_service",
     "app.modules.resource.api.routers.resources_router",
     "app.modules.resource.domain.entities.resource",
+    "app.modules.user.application.services.support_chat_service",
+    "app.modules.user.api.router.support_chat_router",
     "app.modules.software_management",
     "app.modules.security.audit_middleware",
 ]

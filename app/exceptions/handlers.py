@@ -49,6 +49,13 @@ from app.modules.software_management.domain.ports.storage import (
     StorageFileNotFoundError,
     StorageSecurityError,
 )
+from app.modules.user.domain.exceptions import (
+    UserDomainError,
+    ChatMessageDomainError,
+    ChatMessageTooShortError,
+    ChatMessageRepositoryUnavailableError,
+)
+from app.modules.user.domain.ports.support_ai import SupportAIUnavailableError
 from app.modules.resource.domain.exceptions import (
     ResourceDomainError,
     ResourceNotFoundError,
@@ -256,6 +263,32 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ResourceRepositoryUnavailableError)
     async def _resource_repository_unavailable_handler(_request: Request, exc: ResourceRepositoryUnavailableError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    # Support chat: 422 is the code the shared-kernel ValidationError produced
+    # for a too-short question. ChatMessageDomainError is its base and maps to
+    # 400, matching every other context's domain-error base.
+    @app.exception_handler(UserDomainError)
+    async def _user_domain_error_handler(_request: Request, exc: UserDomainError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+    @app.exception_handler(ChatMessageDomainError)
+    async def _chat_message_domain_error_handler(_request: Request, exc: ChatMessageDomainError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+    @app.exception_handler(ChatMessageTooShortError)
+    async def _chat_message_too_short_handler(_request: Request, exc: ChatMessageTooShortError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content={"detail": str(exc)})
+
+    @app.exception_handler(ChatMessageRepositoryUnavailableError)
+    async def _chat_message_repository_unavailable_handler(_request: Request, exc: ChatMessageRepositoryUnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    # 503 for parity with the ExternalServiceError this replaced. Unreachable in
+    # practice: the service catches it and substitutes a canned reply, exactly
+    # as it caught the ExternalServiceError before, so the client still gets 201.
+    @app.exception_handler(SupportAIUnavailableError)
+    async def _support_ai_unavailable_handler(_request: Request, exc: SupportAIUnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

@@ -22,6 +22,8 @@ shape, that is called out explicitly as a breaking change and justified.
 | 3 | `software_management` into line with its own rules | 178 pass, 2 pre-existing fail | 0001, 0004, 0005 | merged |
 | 4 | `security` domain model; alerts decided in the domain | 225 pass, 2 pre-existing fail | 0001, 0002, 0004, 0006 | merged |
 | 5 | `resource` domain model | 266 pass, 2 pre-existing fail | 0001, 0002, 0004, 0007 | merged |
+| 6a | `user`/support-chat: ChatMessage entity, AI provider port | 308 pass, 2 pre-existing fail | 0001, 0002, 0004, 0008 | merged |
+| 6b | `user`/`User` aggregate — blocked, see below | — | — | pending |
 | 6 | `user` domain model | — | — | pending |
 | 7 | `authentication`; split `dependencies.py` | — | — | pending |
 | 8 | `analytics`; `admin_router` queries | — | — | pending |
@@ -718,3 +720,142 @@ endpoint returns, which is a contract change.
 context's. A port restricts what a service *declares*, not what the object can
 physically reach; Phase 7 or 9 is where that gets tightened if it should be.
 
+
+## Phase 6a — support chat, and an event loop that was blocked for a minute at a time
+
+### Why
+
+Phase 6 as planned was "the `user` domain model". It was split in two, for
+reasons at the end of this section, and 6a is the half that was safe to do.
+
+`SupportChatService` held four unrelated things: the system prompt, a length
+rule, the provider configuration, and the HTTP call itself. It carried four
+ratchet entries.
+
+### What moved
+
+| Was | Now |
+|---|---|
+| `infrastructure/persistence/repository/support_chat_repo.py` | `.../chat_message_repo.py`, returning entities |
+| — | `domain/entities/chat_message.py` |
+| — | `domain/policies/support_chat_policy.py` (prompt, fallback text, length rule) |
+| — | `domain/ports/support_ai.py` (`SupportAI`, `SupportAIConfig`) |
+| — | `domain/ports/repository/chat_message_repository.py` |
+| — | `infrastructure/persistence/mappers/chat_message_mapper.py` |
+| — | `infrastructure/external_apis/ai_support/http_support_ai.py` |
+
+### The R8 entry was pointing at something worse than a layering violation
+
+`requests` is on the forbidden list because an application service has no business
+speaking HTTP. But the concrete harm was larger:
+
+```python
+response = requests.post(url, headers=headers, json=payload, timeout=60)
+```
+
+`requests` blocks the calling thread. That call sat inside a coroutine on the
+event loop, so a slow or hanging provider stalled **every other in-flight request
+on that worker** for up to sixty seconds. The layer rule found the import; nothing
+would ever have found the stall.
+
+`HttpSupportAI` uses `httpx.AsyncClient` and awaits. `httpx==0.28.1` was already
+a pinned dependency and was used nowhere, so this adds no package.
+
+`test_concurrent_questions_do_not_serialize` is the regression test — three
+concurrent questions with 0.2s of simulated latency must finish in well under
+0.6s. Mutation-checked by reverting the adapter to a synchronous call and
+confirming the failure.
+
+### R2 rejected the obvious way to wire the prompt
+
+Putting `system_prompt` in `SupportAIConfig` and importing it from the domain in
+`dependencies.py` is the natural first cut, and R2 refuses it: the composition
+root may read another context's `domain.ports` and nothing else. The prompt
+belongs in `domain.policies` — it is what the support bot is allowed to say.
+
+So the port takes it as an argument. The prompt stays with the policy, the service
+supplies it, and the config carries only deployment configuration. Rejected
+alternatives are in ADR 0008.
+
+### Four error kinds became one
+
+Connection failure, HTTP error, non-JSON body and empty completion produced four
+distinct messages and were all caught to substitute a canned reply. The adapter
+now raises one `SupportAIUnavailableError`; the cause survives in the log line.
+The distinction was never load-bearing, because every path ended the same way.
+
+Note the degraded-mode contract, which is unchanged and slightly odd: **a customer
+cannot tell a canned reply from a model reply**, because the response schema has
+no field for it. The question is still recorded, which is deliberate — losing the
+transcript because a third party was down would make it depend on their uptime.
+Surfacing "this was not a real answer" would change the response shape.
+
+### Ordering was load-bearing for the length rule
+
+`clean_question` has to run *before* the model is called, so a one-character
+submission costs no round trip. That is why it is a policy function rather than a
+check inside `ChatMessage.create` — the entity is built after the reply exists.
+`test_a_short_question_never_reaches_the_model` pins it.
+
+### A read that committed
+
+`list_messages` opened a write transaction for a pure read. It now uses
+`read_only()`. No response changes.
+
+### Modelling notes
+
+One row holds a question *and* its answer — `user_message` and
+`assistant_message` are always written together and nothing ever writes half a
+row. So the type models an exchange, while the column and the API field are
+called a message. Renaming either is a schema and contract change, so the awkward
+spelling stays and the mismatch is recorded.
+
+Relatedly, the `role` column defaults to `"user"` but every row ever created is
+`"assistant"`. Both values are modelled so the default stays reachable; only one
+is used.
+
+### Behaviour is unchanged
+
+- 54 routes, SHA-256 `0b745ecc2ac85456fda4439434b96ccaa41d9dde6d6dd90aaf623d392b9e09ff`
+- 201 with a canned reply when the provider is down, 422 for a short question
+- Exchanges still listed oldest first, LIMIT applied to the newest
+- No schema change
+- 308 pass, 2 pre-existing `search_algorithm` failures
+- Ratchet 14 → 10
+
+### Why Phase 6b is blocked
+
+`users` is not a bounded context here. `user_repo` is reached by `auth_service`,
+`verification_recovery` and `superuser_seeder`, and the first two mutate rows it
+returns, relying on session autoflush to persist the change:
+
+| Site | Mutation | With detached entities |
+|---|---|---|
+| `auth_service.py:98` | `user.password_hash = verified_hash` | rehash-on-login stops silently |
+| `auth_service.py:123` | `user_acc.status = VERIFIED` | accounts never verify — lockout |
+| `auth_service.py:218` | `user.password_hash = ...` | reset succeeds, old password still works |
+| `verification_recovery.py:45-48, 76-78` | 4 retry fields | unbounded retry loop |
+
+All four fail *silently* — 200/201 returned, write gone. And nothing would catch
+them: `test_auth_hardening.py` drives `AuthService` with fake repositories and
+never exercises a real `UserRepo` write path.
+
+6b starts with integration tests over a real database for those four flows, then
+converts. The alternative — explicit save operations plus seven rewritten mutation
+sites in the authentication context — is Phase 7's work, since 7 owns
+`auth_service` anyway. `UserUnitOfWork.user_repo` and `session_repo` stay
+annotated `object` with the reason in their docstrings.
+
+### Left alone deliberately
+
+**`rules.py` has two dead functions.** `check_by_email` and `check_by_username`
+have zero call sites. They belong to the `User` aggregate work, so they are
+recorded here rather than deleted in a phase about support chat.
+
+**`SupportAIUnavailableError` → 503 is registered but unreachable.** The service
+catches it, exactly as it caught the `ExternalServiceError` it replaced, so the
+client still gets 201. Registered for parity.
+
+**`follow_redirects=True` is set explicitly on the client.** `httpx` defaults to
+not following redirects and `requests` did follow them. Preserving the old
+behaviour is cheaper than assuming no provider redirects.
