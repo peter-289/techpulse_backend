@@ -7,7 +7,7 @@ from app.modules.user.infrastructure.persistence.repository.user_repo import Use
 from app.modules.user.infrastructure.persistence.repository.session_repo import SessionRepo
 from app.modules.user.infrastructure.persistence.repository.support_chat_repo import ChatMessageRepo
 from app.modules.resource.resource_repo import ResourceRepo
-from app.modules.security.audit import AuditRepository
+from app.modules.security.infrastructure.persistence.repositories.audit_repo import SQLAlchemyAuditRepository
 from app.modules.software_management.infrastructure.persistence.repositories.sqlalchemy_software_repository import SQLAlchemySoftwareRepository
 from app.modules.software_management.infrastructure.persistence.repositories.category_repo import CategoryRepository
 from app.modules.authentication.domain.ports.unit_of_work import AuthenticationUnitOfWork
@@ -75,9 +75,9 @@ class UnitOfWork:
         return self._resource_repo
     
     @property
-    def audit_repo(self) -> AuditRepository:
+    def audit_repo(self) -> SQLAlchemyAuditRepository:
         if self._audit_repo is None:
-            self._audit_repo = AuditRepository(self.session)
+            self._audit_repo = SQLAlchemyAuditRepository(self.session)
         return self._audit_repo
         
     @property

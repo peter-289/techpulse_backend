@@ -58,18 +58,6 @@
     },
     {
       "rule": "R5",
-      "source": "app/modules/security/audit_service.py",
-      "import": "app.infrastructure.database.models.audit_event",
-      "phase": "Phase 4 - introduce an AuditEvent domain model"
-    },
-    {
-      "rule": "R5",
-      "source": "app/modules/security/audit_service.py",
-      "import": "app.infrastructure.database.models.security_alert",
-      "phase": "Phase 4 - introduce a SecurityAlert aggregate"
-    },
-    {
-      "rule": "R5",
       "source": "app/modules/user/application/services/support_chat_service.py",
       "import": "app.infrastructure.database.models.chat_message",
       "phase": "Phase 6 - introduce a ChatMessage entity"

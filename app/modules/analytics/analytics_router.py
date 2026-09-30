@@ -5,18 +5,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.shared.dependencies import get_db
-from app.modules.shared.dependencies import CurrentUser, get_current_user, get_abuse_protection
+from app.modules.shared.dependencies import CurrentUser, get_current_user, get_abuse_protection, alert_thresholds
 from app.modules.security.abuse_protection import AbuseProtection
-from app.modules.security.audit_service import AuditService
+from app.modules.security.application.services.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.shared.enums import CookieConsent
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
-# Get User Service
+# Get the audit service. Analytics events are written to the security context's
+# audit trail rather than a table of their own, so this is the security
+# context's service rather than a second writer with its own idea of the
+# schema. Phase 8 moves the composition of both onto shared dependencies.
 def get_service(db: AsyncSession = Depends(get_db))->AuditService:
     uow = UnitOfWork(session=db)
-    return AuditService(uow=uow)
+    return AuditService(uow=uow, thresholds=alert_thresholds)
 
 class AnalyticsEventRequest(BaseModel):
     event_type: str = Field(..., pattern="^(cookie_consent|user_activity)$")

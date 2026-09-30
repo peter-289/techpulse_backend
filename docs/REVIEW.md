@@ -20,7 +20,7 @@ shape, that is called out explicitly as a breaking change and justified.
 | 1 | Layer boundary enforcement; mapper/presenter split | 128 pass, 2 pre-existing fail | 0001, 0002, 0004 | merged |
 | 2 | `UnitOfWork` port; storage port consolidation | 150 pass, 2 pre-existing fail | 0001, 0003, 0004 | merged |
 | 3 | `software_management` into line with its own rules | 178 pass, 2 pre-existing fail | 0001, 0004, 0005 | merged |
-| 4 | `security` domain model | — | — | pending |
+| 4 | `security` domain model; alerts decided in the domain | 225 pass, 2 pre-existing fail | 0001, 0002, 0004, 0006 | merged |
 | 5 | `resource` domain model | — | — | pending |
 | 6 | `user` domain model | — | — | pending |
 | 7 | `authentication`; split `dependencies.py` | — | — | pending |
@@ -443,3 +443,141 @@ normalised.
 newline. The same class-shape duplication ADR 0003 addressed for the storage
 exceptions, but here no code imports either copy, so nothing is broken yet.
 Worth folding in when the policy is adopted.
+
+---
+
+## Phase 4 — the `security` domain model
+
+### Why
+
+Phase 3 gave `software_management` a domain model. The security context still
+had none, and it is the one that runs on every request: the audit trail is
+written by middleware for every API call.
+
+The port made the gap legible. `AuditRepository.count_events` took
+`list[ColumnElement[bool]]`, so `AuditService` built `AuditEvent.event_type ==
+event_type` inline and imported both ORM models to do it. A port with the query
+shape on its signature is the application layer writing SQL through a hole
+shaped like an interface — R5 had both imports recorded, which is how the missing
+model was known.
+
+The alerting rules were an `if` / `elif` chain over `settings.ALERT_*`, and
+`AuditService` had no test at all. So the logic that decides when a security
+system raises an alert was both the least testable code in the context and the
+code with no coverage.
+
+### What moved
+
+| Was | Now | Layer |
+|---|---|---|
+| `AuditEvent` ORM row built by the service | `AuditEvent` entity with validity rules | domain |
+| `SecurityAlert` ORM row | `SecurityAlert` aggregate with `acknowledge` | domain |
+| `settings.ALERT_*` read inside the service | `AlertThresholds`, injected from the composition root | domain / shared |
+| `if`/`elif` over event types in the service | `rules_for` + `AlertRule` in `alert_rules` | domain |
+| `count_events(predicates: list[ColumnElement])` | `count_events(event_type=..., since=...)` | domain |
+| `get_alert(predicates)` | `has_unacknowledged_alert(...) -> bool` | domain |
+| `app/modules/security/audit.py` | `security/infrastructure/persistence/repositories/audit_repo.py` | infrastructure |
+| mappers inline in the repository | `security/infrastructure/persistence/mappers/audit_mapper.py` | infrastructure |
+| `audit_service.py` at the context root | `application/services/audit_service.py` | application |
+
+### The rules are selected, then evaluated
+
+`rules_for` answers "could this event trigger anything?" in a dict lookup.
+`AlertRule.exceeded_by` and `.raise_alert` decide. The split exists because the
+count between them is I/O: the service has to fetch it, so the decision cannot be
+one call without putting a port inside the domain.
+
+The alternative — one async function taking a counting callable — makes every
+rule test need a double. The split costs a two-step call and buys the property
+that matters: an audited 200 costs one dict lookup and no query.
+`test_ordinary_traffic_raises_nothing_and_counts_nothing` asserts zero count
+calls, and fails if the count is ever hoisted out of the loop.
+
+`AlertThresholds` went into `domain/ports/` rather than `domain/value_objects/`
+because R2 lets the composition root reach another context's ports and nothing
+else, so the other location was a new violation on import. It is configuration
+handed to a use case rather than a concept the domain reasons about, and it is
+the placement `UploadLimits` got in Phase 3 for the same reason. The alternative
+was widening `_is_port` for every context's value objects to accommodate one
+import.
+
+### Two behaviours that had no home
+
+**Path truncation was a bug.** The service truncated `path` to 500 characters
+while the column is `varchar(255)`. A request with a path between those lengths
+raised a database error and lost the audit event — the one record that must not
+be droppable. A fixed character limit belongs to the column, so the mapper
+truncates and the entity keeps the path whole.
+
+**Acknowledgement could not be expressed.** `admin_router` set
+`acknowledged = True` on the ORM row, so acknowledging twice was
+indistinguishable from acknowledging once. `SecurityAlert.acknowledge` refuses to
+run twice. It is not on the live path yet — `admin_router` is Phase 8.
+
+`SecurityAlert` deliberately does *not* inherit `AggregateRoot`. It could, and
+would then have a queue to fill, but this context has no `DomainEventPublisher`
+wired, so every recorded event would be the construct-and-drop pattern Phase 3
+deleted from the upload path.
+
+### A defect found while verifying the phase
+
+Verifying the route table needed a clean worktree at HEAD, and HEAD would not
+import:
+
+```
+ModuleNotFoundError: No module named 'app.infrastructure.storage.local_artifact_stager'
+```
+
+`.gitignore` has carried an unanchored `storage/` since `e0d2f6c`, added to keep
+user uploads out of version control. A trailing-slash pattern with no leading
+slash matches a directory of that name at *any* depth, so it also matched
+`app/infrastructure/storage/` — a source package Phase 3 added. The stager was
+never committed. It is on disk, 200-odd tests pass against it, and a fresh clone
+cannot start.
+
+Nothing caught it because every test runs against the working tree, where the
+untracked file happens to be present. The ratchet reads the filesystem, not git.
+
+Fixed separately in `4c89f15` by anchoring the pattern to `/storage/`, with both
+behaviours checked rather than assumed.
+
+### Behaviour is unchanged
+
+| | Before | After |
+|---|---|---|
+| Tests | 178 pass, 2 pre-existing fail | 225 pass, 2 pre-existing fail |
+| HTTP API | — | identical; 54 method+path entries, same route table hash |
+| Alert descriptions | — | same strings, byte for byte |
+| Thresholds | `ALERT_LOGIN_FAILURE_THRESHOLD=5`, `ALERT_ACCESS_DENIED_THRESHOLD=10`, 15-minute windows | same defaults, from the same settings |
+| DB schema | — | identical; no migration |
+| Repository failure | `SQLAlchemyError` inside the service | `AuditRepositoryUnavailableError` |
+
+The 47 new passes are the rules (17), the service path (12), the entity (11) and
+the aggregate (5), plus 2 architecture tests for the moved service.
+
+`rules_for` is mutation-checked in both directions: giving every event type a
+default rule fails `test_ordinary_traffic_raises_nothing_and_counts_nothing` and
+the four unknown-type cases, and moving `save_alert` outside the unit of work
+fails `test_the_alert_is_written_before_the_transaction_closes`.
+
+### Left alone deliberately
+
+**`admin_router` still reads both ORM models** and builds queries — the R6
+entry, assigned to Phase 8. It is also the only caller that writes
+`acknowledged` directly, so `SecurityAlert.acknowledge` is currently exercised
+only by tests.
+
+**The analytics router still reaches into security's application layer**, builds
+its own `AuditService` from a concrete `UnitOfWork`, and reads the thresholds
+from the composition root module directly rather than through
+`get_audit_service`. It is a cross-context import of another context's
+application service, which no rule checks — R7 covers api-to-api only. Phase 8
+owns analytics.
+
+**`AuditEventType` is incomplete.** It names 2 of the ~5 event types actually
+written; `http.request`, `auth.login.success`, `cookie.consent.accepted` and
+`client.activity` are bare strings at their call sites. The policy keys off the
+two it needs and treats the rest as uninteresting, which is correct — but a
+test pins those four as "no rule watches this", so completing the enum later
+means revisiting that test rather than being surprised by it.
+

@@ -12,8 +12,8 @@ from starlette.requests import Request
 
 
 from app.core.config import settings
-from app.modules.shared.dependencies import resolve_optional_user, get_redis, _get_abuse_protection
-from app.modules.security.audit_service import AuditService
+from app.modules.shared.dependencies import resolve_optional_user, get_redis, _get_abuse_protection, alert_thresholds
+from app.modules.security.application.services.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.db_setup import SessionLocal
 
@@ -114,7 +114,14 @@ class AuditMiddleware(BaseHTTPMiddleware):
     async def _log_audit_event(self, **event_data) -> None:
         db =  SessionLocal()
         try:
-            await AuditService(UnitOfWork(session=db)).log_audit_event(**event_data)
+            # Thresholds come from the composition root, as they do on the
+            # request path. This task builds its service by hand because it owns
+            # its own session and outlives the request that spawned it.
+            service = AuditService(
+                uow=UnitOfWork(session=db),
+                thresholds=alert_thresholds,
+            )
+            await service.log_audit_event(**event_data)
         finally:
             await db.close()
 

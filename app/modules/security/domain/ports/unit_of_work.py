@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from app.modules.security.domain.ports.repositories.audit_repository import (
+    AuditRepository,
+)
 from app.modules.shared.unit_of_work import UnitOfWorkPort
 
 
@@ -19,10 +22,13 @@ class SecurityUnitOfWork(UnitOfWorkPort, Protocol):
     """Transaction boundary for the security context."""
 
     @property
-    def audit_repo(self) -> object:
-        """Repository for AuditEvent and SecurityAlert persistence.
+    def audit_repo(self) -> AuditRepository:
+        """Repository for audit events and security alerts.
 
-        ``object`` until Phase 4 introduces the AuditEvent domain model and
-        the SecurityAlert aggregate.
+        ``AuditEvent`` and ``SecurityAlert`` are deliberately exposed through one
+        repository rather than two. They are written in a single transaction --
+        an alert is a consequence of the event that triggered it, and neither is
+        meaningful without the other -- so splitting them would only offer the
+        service a way to commit one without the other.
         """
         ...

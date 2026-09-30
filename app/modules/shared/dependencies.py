@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from jose import JWTError, jwt
@@ -25,6 +25,8 @@ from app.infrastructure.redis.client import redis_manager
 from .container import storage, signer
 from .enums import RoleEnum, UserStatus
 from app.modules.security.abuse_protection import AbuseProtection
+from app.modules.security.application.services.audit_service import AuditService
+from app.modules.security.domain.ports.alert_thresholds import AlertThresholds
 from app.modules.security.token_manager import (
     ACCESS_TOKEN_TYPE,
     EMAIL_VERIFICATION_TOKEN_TYPE,
@@ -425,6 +427,30 @@ stager = LocalArtifactStager()
 
 def get_artifact_stager() -> ArtifactStager:
     return stager
+
+
+# === ALERT THRESHOLDS ===
+# Read from the environment here for the same reason as upload_limits above: the
+# detection rules enforce these numbers, and a use-case that reads them from a
+# global is a use-case that cannot be told "fail after two attempts".
+alert_thresholds = AlertThresholds(
+    login_failures=settings.ALERT_LOGIN_FAILURE_THRESHOLD,
+    access_denied=settings.ALERT_ACCESS_DENIED_THRESHOLD,
+    lookback=timedelta(minutes=settings.ALERT_LOOKBACK_MINUTES),
+    dedup=timedelta(minutes=settings.ALERT_DEDUP_MINUTES),
+)
+
+
+def get_audit_thresholds() -> AlertThresholds:
+    return alert_thresholds
+
+
+# === GET AUDIT SERVICE ===
+def get_audit_service(
+    unit_of_work: UnitOfWork = Depends(get_unit_of_work),
+    thresholds: AlertThresholds = Depends(get_audit_thresholds),
+) -> AuditService:
+    return AuditService(uow=unit_of_work, thresholds=thresholds)
 
 
 

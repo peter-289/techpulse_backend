@@ -22,6 +22,7 @@ The boundary rules described here are executable:
 | 0003 | [Consolidate the storage port and the Unit of Work port](0003-consolidate-the-storage-and-unit-of-work-ports.md) | Accepted |
 | 0004 | [Enforce layer boundaries with a ratchet](0004-enforce-layer-boundaries-with-a-ratchet.md) | Accepted |
 | 0005 | [Stage uploads behind a port, and make domain events real](0005-stage-uploads-behind-a-port-and-make-domain-events-real.md) | Accepted |
+| 0006 | [Give the security context a domain model, and decide alerts in the domain](0006-security-domain-model-and-alert-decisions.md) | Accepted |
 
 ## Template
 
@@ -57,5 +58,6 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 1 | Layer boundary enforcement; mapper/presenter split | 0002, 0004 |
 | 2 | `UnitOfWork` port; storage port consolidation | 0001, 0003 |
 | 3 | `software_management` brought into line with its own rules | 0001, 0005 |
-| 4-8 | Per-module domain models, in dependency order | 0001 |
+| 4 | `security` domain model; alerts decided in the domain | 0001, 0002, 0006 |
+| 5-8 | Per-module domain models, in dependency order | 0001 |
 | 9 | Ratchet drained, tests re-enabled, docs corrected | 0004 |
