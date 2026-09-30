@@ -7,10 +7,10 @@ from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.resource.api.presenters import resource_read
 from app.modules.resource.application.services.resource_service import ResourceService
 from app.modules.resource.schema.resource_schema import ResourceCreate, ResourceRead
-from app.modules.shared.dependencies import (
+from app.modules.shared.dependencies import get_db
+from app.modules.security.dependencies import (
     CurrentUser,
     get_current_user,
-    get_db,
     require_role,
 )
 from app.modules.shared.enums import RoleEnum

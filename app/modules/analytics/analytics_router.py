@@ -5,7 +5,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.shared.dependencies import get_db
-from app.modules.shared.dependencies import CurrentUser, get_current_user, get_abuse_protection, alert_thresholds
+from app.modules.security.dependencies import (
+    CurrentUser,
+    alert_thresholds,
+    get_abuse_protection,
+    get_current_user,
+)
 from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.application.services.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork

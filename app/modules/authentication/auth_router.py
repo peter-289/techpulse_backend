@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.authentication.auth_service import AuthService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.user.schema.user_schema import ProfileResponse
-from app.modules.shared.dependencies import get_db, get_abuse_protection
+from app.modules.shared.dependencies import get_db
+from app.modules.security.dependencies import get_abuse_protection
 from app.core.config import settings
 from app.modules.security.abuse_protection import AbuseProtection
 

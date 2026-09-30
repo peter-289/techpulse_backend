@@ -32,8 +32,9 @@ from app.modules.security.token_manager import (
     ACCESS_TOKEN_TYPE,
     EXPECTED_ISSUER,
     TokenManager,
+    decode_email_verification_token,
+    decode_password_reset_token,
 )
-from app.modules.shared.dependencies import get_email_user, get_password_reset_user
 
 
 @pytest.fixture
@@ -220,7 +221,7 @@ def test_access_token_does_not_carry_a_role(tokens) -> None:
     token = tokens.create_login_token(data={"sub": str(uuid4()), "sid": 1, "role": "ADMIN"})
     payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     assert payload["role"] == "ADMIN"  # caller's value is carried but never read
-    from app.modules.shared.dependencies import AccessTokenClaims, decode_access_token
+    from app.modules.security.token_manager import decode_access_token
 
     claims = decode_access_token(token)
     assert not hasattr(claims, "role")
@@ -253,7 +254,7 @@ def test_each_flow_signs_a_distinct_token_type(tokens) -> None:
 def test_email_and_reset_tokens_cannot_be_read_as_access_tokens(tokens) -> None:
     """The three signing secrets collapse onto SECRET_KEY by default, so `typ`
     is the only thing keeping an email link from authenticating a request."""
-    from app.modules.shared.dependencies import decode_access_token
+    from app.modules.security.token_manager import decode_access_token
 
     user_id = str(uuid4())
     email_token = tokens.create_email_verification_token(user_id)
@@ -284,7 +285,7 @@ def test_email_verification_token_is_single_use(tokens) -> None:
 
     manager = TokenManager(abuse_protection=_OnceAbuse())
     token = manager.create_email_verification_token(str(uuid4()))
-    payload = get_email_user(token)
+    payload = decode_email_verification_token(token)
     exp = payload["exp"]
 
     assert asyncio.run(manager.consume_email_verification_token(token=token, exp=exp)) is True
@@ -306,7 +307,7 @@ def test_password_reset_token_is_single_use(tokens) -> None:
 
     manager = TokenManager(abuse_protection=_OnceAbuse())
     token = manager.create_password_reset_token(str(uuid4()))
-    payload = get_password_reset_user(token)
+    payload = decode_password_reset_token(token)
 
     assert asyncio.run(manager.consume_password_reset_token(token=token, exp=payload["exp"])) is True
     assert asyncio.run(manager.consume_password_reset_token(token=token, exp=payload["exp"])) is False
@@ -328,8 +329,8 @@ def test_verification_and_reset_tokens_do_not_share_a_replay_scope(tokens) -> No
     verify_token = manager.create_email_verification_token(user_id)
     reset_token = manager.create_password_reset_token(user_id)
 
-    verify_payload = get_email_user(verify_token)
-    reset_payload = get_password_reset_user(reset_token)
+    verify_payload = decode_email_verification_token(verify_token)
+    reset_payload = decode_password_reset_token(reset_token)
     asyncio.run(manager.consume_email_verification_token(token=verify_token, exp=verify_payload["exp"]))
     asyncio.run(manager.consume_password_reset_token(token=reset_token, exp=reset_payload["exp"]))
 
@@ -355,7 +356,7 @@ def test_email_token_requires_core_claims(tokens, missing) -> None:
     stripped = jwt.encode(decoded, settings.EMAIL_VERIFY_SECRET, algorithm=settings.ALGORITHM)
 
     with pytest.raises(HTTPException) as exc_info:
-        get_email_user(stripped)
+        decode_email_verification_token(stripped)
     assert exc_info.value.status_code == 401
 
 
@@ -365,5 +366,5 @@ def test_email_token_missing_purpose_is_rejected(tokens) -> None:
     decoded.pop("purpose")
     stripped = jwt.encode(decoded, settings.EMAIL_VERIFY_SECRET, algorithm=settings.ALGORITHM)
     with pytest.raises(HTTPException) as exc_info:
-        get_email_user(stripped)
+        decode_email_verification_token(stripped)
     assert exc_info.value.status_code == 401

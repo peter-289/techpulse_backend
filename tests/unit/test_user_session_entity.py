@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from app.modules.user.domain.entities.user_session import UserSession
 
@@ -179,6 +178,20 @@ class TestIsExpiredAt:
         aware = datetime(2026, 1, 1, 12, 0, tzinfo=tz(timedelta(hours=2)))
         # 12:00+02:00 is 10:00Z, which is before NOW at 12:00Z.
         assert _session(expires_at=aware).is_expired_at(NOW) is True
+
+    def test_a_missing_expiry_counts_as_expired(self) -> None:
+        """The rule revalidation used to express as ``expires_at is None``.
+
+        ``expires_at`` is declared ``NOT NULL``, so a repository read cannot
+        produce this -- only a hand-built entity. Rejecting it is still the right
+        answer: a session with no stated window has no interval in which it is
+        valid. Without the branch the comparison raises ``TypeError``, which on
+        the request path would be a 500 rather than a 401.
+        """
+        session = _session()
+        session.expires_at = None
+        assert session.is_expired_at(NOW) is True
+        assert session.is_usable_at(NOW) is False
 
 
 class TestIsUsableAt:

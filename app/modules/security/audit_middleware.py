@@ -12,7 +12,12 @@ from starlette.requests import Request
 
 
 from app.core.config import settings
-from app.modules.shared.dependencies import resolve_optional_user, get_redis, _get_abuse_protection, alert_thresholds
+from app.modules.shared.dependencies import get_redis
+from app.modules.security.dependencies import (
+    _get_abuse_protection,
+    alert_thresholds,
+    resolve_optional_user,
+)
 from app.modules.security.application.services.audit_service import AuditService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.infrastructure.database.db_setup import SessionLocal
@@ -76,7 +81,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 if actor_user_id is None:
                     try:
                         async with SessionLocal() as audit_session:
-                            maybe_user = await resolve_optional_user(request, audit_session)
+                            maybe_user = await resolve_optional_user(
+                                request, UnitOfWork(session=audit_session)
+                            )
                         actor_user_id = str(maybe_user.user_id) if maybe_user else None
                     except Exception as exc:
                         # Attribution is best-effort; never fail a request over it.

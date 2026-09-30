@@ -20,21 +20,21 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import settings
 from app.infrastructure.database.db_setup import Base
+from app.infrastructure.database.unit_of_work import UnitOfWork
 import app.infrastructure.database.models  # noqa: F401  (registers all tables)
 from app.infrastructure.database.models.session import UserSession
 from app.infrastructure.database.models.user import User
-from app.modules.shared.dependencies import (
-    AccessTokenClaims,
+from app.modules.shared.enums import RoleEnum, UserStatus
+from app.modules.security.dependencies import (
     CurrentUser,
-    decode_access_token,
     get_current_user,
     resolve_optional_user,
 )
-from app.modules.shared.enums import RoleEnum, UserStatus
 from app.modules.security.token_manager import (
     ACCESS_TOKEN_TYPE,
     EMAIL_VERIFICATION_TOKEN_TYPE,
     EXPECTED_ISSUER,
+    decode_access_token,
 )
 
 
@@ -163,7 +163,7 @@ async def test_role_comes_from_the_database_not_the_token(session_factory) -> No
     token = _access_token(user.id, user_session.id, role="ADMIN")
 
     async with session_factory() as db:
-        resolved = await get_current_user(_FakeRequest(), token, db)
+        resolved = await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
 
     assert resolved.is_admin is False
     assert resolved.role == RoleEnum.USER.value.upper()
@@ -176,7 +176,7 @@ async def test_promotion_is_picked_up_on_the_next_request(session_factory) -> No
     token = _access_token(user.id, user_session.id, role="USER")
 
     async with session_factory() as db:
-        assert (await get_current_user(_FakeRequest(), token, db)).is_admin is False
+        assert (await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))).is_admin is False
 
     async with session_factory() as db:
         db_user = await db.get(User, user.id)
@@ -184,7 +184,7 @@ async def test_promotion_is_picked_up_on_the_next_request(session_factory) -> No
         await db.commit()
 
     async with session_factory() as db:
-        assert (await get_current_user(_FakeRequest(), token, db)).is_admin is True
+        assert (await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))).is_admin is True
 
 
 @pytest.mark.asyncio
@@ -193,7 +193,9 @@ async def test_logout_invalidates_the_access_token(session_factory) -> None:
     token = _access_token(user.id, user_session.id)
 
     async with session_factory() as db:
-        assert (await get_current_user(_FakeRequest(), token, db)).user_id == UUID(user.id)
+        assert (
+            await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
+        ).user_id == UUID(user.id)
 
     async with session_factory() as db:
         row = await db.get(UserSession, user_session.id)
@@ -202,7 +204,7 @@ async def test_logout_invalidates_the_access_token(session_factory) -> None:
 
     async with session_factory() as db:
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(_FakeRequest(), token, db)
+            await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
     assert exc_info.value.status_code == 401
 
 
@@ -212,7 +214,7 @@ async def test_expired_session_rejects_the_access_token(session_factory) -> None
     token = _access_token(user.id, user_session.id)
     async with session_factory() as db:
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(_FakeRequest(), token, db)
+            await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
     assert exc_info.value.status_code == 401
 
 
@@ -222,7 +224,7 @@ async def test_unverified_account_cannot_use_an_old_token(session_factory) -> No
     token = _access_token(user.id, user_session.id)
     async with session_factory() as db:
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(_FakeRequest(), token, db)
+            await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
     assert exc_info.value.status_code == 401
 
 
@@ -232,7 +234,7 @@ async def test_token_for_an_unknown_session_is_rejected(session_factory) -> None
     token = _access_token(str(uuid4()), 999_999)
     async with session_factory() as db:
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(_FakeRequest(), token, db)
+            await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
     assert exc_info.value.status_code == 401
 
 
@@ -240,13 +242,18 @@ async def test_token_for_an_unknown_session_is_rejected(session_factory) -> None
 async def test_session_belonging_to_another_user_is_rejected(session_factory) -> None:
     # `sid` and `sub` are validated against each other, so a valid session id
     # cannot be paired with someone else's subject.
-    user_a, session_a = await _seed_user(session_factory)
-    _user_b, _session_b = await _seed_user(session_factory)
-    token = _access_token(user_a.id, session_a.id)
+    #
+    # This test previously minted a token with `user_a`'s subject and `session_a`'s
+    # id, decoded it, and asserted the two matched -- which is a statement about
+    # the token, not about revalidation. The mismatch it describes was never
+    # exercised, so the check could be deleted without failing anything.
+    user_a, _session_a = await _seed_user(session_factory)
+    _user_b, session_b = await _seed_user(session_factory)
+    token = _access_token(user_a.id, session_b.id)
     async with session_factory() as db:
-        claims = decode_access_token(token)
-        assert claims.user_id == UUID(user_a.id)
-        assert session_a.user_id == user_a.id
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(_FakeRequest(), token, UnitOfWork(session=db))
+    assert exc_info.value.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -261,7 +268,9 @@ async def test_get_current_user_reads_the_access_cookie(session_factory) -> None
     user, user_session = await _seed_user(session_factory)
     request = _FakeRequest(cookies={settings.ACCESS_COOKIE_NAME: _access_token(user.id, user_session.id)})
     async with session_factory() as db:
-        assert (await get_current_user(request, None, db)).user_id == UUID(user.id)
+        assert (
+            await get_current_user(request, None, UnitOfWork(session=db))
+        ).user_id == UUID(user.id)
 
 
 # --- optional resolution (audit attribution) -----------------------------
@@ -274,7 +283,7 @@ async def test_resolve_optional_user_returns_a_current_user(session_factory) -> 
     user, user_session = await _seed_user(session_factory)
     request = _FakeRequest(cookies={settings.ACCESS_COOKIE_NAME: _access_token(user.id, user_session.id)})
     async with session_factory() as db:
-        resolved = await resolve_optional_user(request, db)
+        resolved = await resolve_optional_user(request, UnitOfWork(session=db))
     assert isinstance(resolved, CurrentUser)
     assert resolved.user_id == UUID(user.id)
 
@@ -282,9 +291,10 @@ async def test_resolve_optional_user_returns_a_current_user(session_factory) -> 
 @pytest.mark.asyncio
 async def test_resolve_optional_user_returns_none_instead_of_raising(session_factory) -> None:
     async with session_factory() as db:
-        assert await resolve_optional_user(_FakeRequest(), db) is None
+        uow = UnitOfWork(session=db)
+        assert await resolve_optional_user(_FakeRequest(), uow) is None
         assert await resolve_optional_user(
-            _FakeRequest(headers={"authorization": "Bearer garbage"}), db
+            _FakeRequest(headers={"authorization": "Bearer garbage"}), uow
         ) is None
 
 

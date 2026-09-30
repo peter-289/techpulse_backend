@@ -6,14 +6,17 @@ import logging
 
 from app.modules.user.application.services.rules import validate_password_strength
 from app.modules.security.password_manager import hash_password, verify_password
-from app.modules.security.token_manager import TokenManager
+from app.modules.security.token_manager import (
+    TokenManager,
+    decode_email_verification_token,
+    decode_password_reset_token,
+)
 from app.modules.authentication.domain.ports.unit_of_work import AuthenticationUnitOfWork
 from app.exceptions.exceptions import UnauthorizedError, DomainError, NotFoundError
 from app.modules.shared.enums import UserStatus
 from app.infrastructure.email.email_service.email_worker import queue_verification_email
 from app.infrastructure.email.email_service.email_service import send_password_reset_email
 from app.core.config import settings
-from app.modules.shared.dependencies import get_email_user, get_password_reset_user
 from app.modules.security.abuse_protection import AbuseProtection
 
 # Set up logging
@@ -101,7 +104,7 @@ class AuthService:
     async def verify_user_account(self, token: str):
         """Verify user account."""
         # Get user from email token, raise UnauthorizedError if no user is found
-        user = get_email_user(token=token)
+        user = decode_email_verification_token(token=token)
         if not user:
             raise UnauthorizedError("Invalid token.")
         if not await self._tokens.consume_email_verification_token(
@@ -212,7 +215,7 @@ class AuthService:
             raise UnauthorizedError("Passwords do not match")
         validate_password_strength(new_password)
        
-        payload = get_password_reset_user(token=token)
+        payload = decode_password_reset_token(token=token)
         if not await self._tokens.consume_password_reset_token(token=token, exp=payload["exp"]):
             raise UnauthorizedError("Reset token has already been used")
         async with self.uow:

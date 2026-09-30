@@ -14,7 +14,7 @@ import pytest
 
 from app.exceptions.exceptions import TooManyRequestsError
 from app.modules.security.abuse_protection import DOWNLOAD_POLICY, AbuseProtection
-from app.modules.shared.dependencies import get_abuse_protection
+from app.modules.security.dependencies import get_abuse_protection
 
 
 def test_get_abuse_protection_returns_a_shared_instance() -> None:
@@ -22,7 +22,7 @@ def test_get_abuse_protection_returns_a_shared_instance() -> None:
 
 
 def test_singleton_is_rebuilt_when_the_redis_client_changes(monkeypatch) -> None:
-    import app.modules.shared.dependencies as deps
+    import app.modules.security.dependencies as deps
 
     monkeypatch.setattr(deps, "_abuse_protection", None, raising=False)
 

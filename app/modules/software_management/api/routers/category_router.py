@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.shared.enums import RoleEnum
-from app.modules.shared.dependencies import (
+from app.modules.shared.dependencies import get_db
+from app.modules.security.dependencies import (
     CurrentUser,
     get_current_user,
-    get_db,
     require_role,
 )
 from app.infrastructure.database.unit_of_work import UnitOfWork

@@ -64,15 +64,14 @@ class SQLAlchemySessionRepository:
             raise SessionRepositoryUnavailableError("Session storage unavailable") from exc
         return to_domain(model)
 
+    async def get_by_id(self, session_id: int) -> UserSession | None:
+        """Look a session up by primary key, for access-token revalidation."""
+        stmt = select(SessionModel).where(SessionModel.id == session_id)
+        return to_domain_or_none(await self._one(stmt))
+
     async def get_by_refresh_hash(self, refresh_hash: str) -> UserSession | None:
         stmt = select(SessionModel).where(SessionModel.refresh_token_hash == refresh_hash)
-        try:
-            result = await self.db.execute(stmt)
-        except SQLAlchemyError as exc:
-            logger.warning("Session lookup failed: %s", exc, exc_info=True)
-            raise SessionRepositoryUnavailableError("Session storage unavailable") from exc
-        model = result.scalar_one_or_none()
-        return to_domain(model) if model is not None else None
+        return to_domain_or_none(await self._one(stmt))
 
     async def save(self, session: UserSession) -> UserSession:
         """Persist a loaded session's changes.
@@ -114,3 +113,15 @@ class SQLAlchemySessionRepository:
         except SQLAlchemyError as exc:
             logger.warning("Bulk session revocation failed: %s", exc, exc_info=True)
             raise SessionRepositoryUnavailableError("Session storage unavailable") from exc
+
+    async def _one(self, stmt) -> object:
+        try:
+            result = await self.db.execute(stmt)
+        except SQLAlchemyError as exc:
+            logger.warning("Session lookup failed: %s", exc, exc_info=True)
+            raise SessionRepositoryUnavailableError("Session storage unavailable") from exc
+        return result.scalar_one_or_none()
+
+
+def to_domain_or_none(model: SessionModel | None) -> UserSession | None:
+    return to_domain(model) if model is not None else None

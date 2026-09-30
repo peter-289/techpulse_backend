@@ -1,7 +1,9 @@
 from jose import JWTError, jwt
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
+from uuid import UUID
 from fastapi.security import OAuth2PasswordBearer
 from fastapi import  HTTPException, status
 
@@ -30,6 +32,118 @@ EXPECTED_ISSUER = "Tech_Pulse_Technologies"
 ACCESS_TOKEN_TYPE = "access"
 EMAIL_VERIFICATION_TOKEN_TYPE = "email_verification"
 PASSWORD_RESET_TOKEN_TYPE = "password_reset"
+
+# ``exp``/``iat``/``sub``/``iss``/``jti`` are required on every token this module
+# reads back, so a token missing any of them is rejected rather than silently
+# accepted -- ``jwt.decode`` only validates ``exp`` when the claim is present.
+# Note python-jose spells these ``require_<claim>``; a ``require=[...]`` list is
+# silently ignored.
+REQUIRED_CLAIMS = {
+    "require_exp": True,
+    "require_iat": True,
+    "require_sub": True,
+    "require_iss": True,
+    "require_jti": True,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class AccessTokenClaims:
+    """What a verified access token asserts, before any database lookup."""
+
+    user_id: UUID
+    session_id: int
+
+
+def decode_access_token(token: str) -> AccessTokenClaims:
+    """Verify an access token's signature and shape.
+
+    Returns the subject and the session the token is bound to. It says nothing
+    about whether either is still valid: that is a database question, answered by
+    the security context's revalidation.
+
+    ``typ`` has no ``require_`` equivalent, so it is checked here.
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+            options=dict(REQUIRED_CLAIMS),
+        )
+        if payload.get("typ") != ACCESS_TOKEN_TYPE:
+            raise credentials_exception
+        if payload.get("iss") != EXPECTED_ISSUER:
+            raise credentials_exception
+        return AccessTokenClaims(
+            user_id=UUID(str(payload["sub"])),
+            session_id=int(payload["sid"]),
+        )
+    except (JWTError, ValueError, TypeError, KeyError, AttributeError):
+        raise credentials_exception
+
+
+def decode_email_verification_token(token: str) -> dict:
+    """Verify an email-verification token and return the claims it carries.
+
+    Named ``decode_*`` rather than the ``get_email_user`` this replaced because it
+    returns the token's claims and never loads an account: reading the account is
+    the caller's next step, against the user context's port.
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.EMAIL_VERIFY_SECRET,
+            algorithms=[settings.ALGORITHM],
+            options=dict(REQUIRED_CLAIMS),
+        )
+        user_id: str = payload["sub"]
+        purpose: str = payload["purpose"]
+        issuer: str = payload["iss"]
+        exp = payload["exp"]
+
+        if payload.get("typ") != EMAIL_VERIFICATION_TOKEN_TYPE:
+            raise credentials_exception
+        if purpose != EXPECTED_PURPOSE:
+            raise credentials_exception
+        if issuer != EXPECTED_ISSUER:
+            raise credentials_exception
+    except (JWTError, ValueError, TypeError, KeyError):
+        raise credentials_exception
+    return {
+        "user_id": user_id,
+        "purpose": purpose,
+        "exp": exp,
+    }
+
+
+def decode_password_reset_token(token: str) -> dict:
+    """Verify a password-reset token and return the claims it carries.
+
+    Carries ``jti`` as well, because the reset flow records the token id so a
+    second use of the same link can be refused.
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.PASSWORD_RESET_SECRET,
+            algorithms=[settings.ALGORITHM],
+            options=dict(REQUIRED_CLAIMS),
+        )
+        user_id: str = payload["sub"]
+        jti: str = payload["jti"]
+        purpose: str = payload["purpose"]
+        issuer: str = payload["iss"]
+        exp = payload["exp"]
+        if payload.get("typ") != PASSWORD_RESET_TOKEN_TYPE:
+            raise credentials_exception
+        if purpose != EXPECTED_RESET_PURPOSE:
+            raise credentials_exception
+        if issuer != EXPECTED_ISSUER:
+            raise credentials_exception
+    except (JWTError, ValueError, TypeError, KeyError):
+        raise credentials_exception
+    return {"user_id": user_id, "jti": jti, "purpose": purpose, "exp": exp}
 
 
 class TokenManager:

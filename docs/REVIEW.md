@@ -25,7 +25,7 @@ shape, that is called out explicitly as a breaking change and justified.
 | 6a | `user`/support-chat: ChatMessage entity, AI provider port | 308 pass, 2 pre-existing fail | 0001, 0002, 0004, 0008 | merged |
 | 6b | `user`/`User` aggregate; explicit `save` on the user repository | 394 pass, 2 pre-existing fail | 0001, 0002, 0009 | merged |
 | 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 456 pass, 2 pre-existing fail | 0001, 0002, 0010 | merged |
-| 7b | split `shared/dependencies.py`; revalidation off the ORM | — | — | pending |
+| 7b | split `shared/dependencies.py`; revalidation off the ORM | 471 pass, 2 pre-existing fail | 0001, 0011 | merged |
 | 8 | `analytics`; `admin_router` queries | — | — | pending |
 | 9 | Drain ratchet, re-enable tests, correct `ARCHITECTURE.md` | — | — | pending |
 
@@ -1195,3 +1195,208 @@ rule is the only real fix and it is not in place.
 
 **`admin_router` still reads both ORM models** and builds queries — the last
 ratchet entry, Phase 8.
+
+## Phase 7b — the composition root, split by ownership, and the last ORM read
+
+### What the file was
+
+`app/modules/shared/dependencies.py` was 474 lines holding twenty-odd providers
+for every context in the codebase: the database session, the Redis client, the
+unit of work, access-token decoding, access-token revalidation, RBAC, the
+abuse-protection singleton, the malware scanner, local storage, the download
+signer, the event publisher, the artifact stager, the upload limits, the alert
+thresholds, the AI provider, and four use-case factories.
+
+The split followed the ownership its call sites already implied. Nothing had to
+decide where anything went; every name had exactly one obvious answer, which is
+the sign that a 474-line composition root is a symptom rather than a design.
+
+| Provider | Home |
+|---|---|
+| `get_db`, `get_redis`, `get_unit_of_work` | `app/modules/shared/dependencies.py` |
+| tokens, principals, `require_role`, abuse protection, audit service | `app/modules/security/dependencies.py` |
+| scanner, storage, signer, event publisher, stager, software use cases | `app/modules/software_management/dependencies.py` |
+| the support-chat AI provider | `app/modules/user/dependencies.py` |
+
+The three that stayed are the three with no owning context. A per-context copy of
+any of them would be a second connection pool behind the same database, so one
+instance is the correct answer there rather than a convenient one.
+
+`shared/dependencies.py` is now 53 lines and imports no context at all.
+
+**This deviates from ADR 0001, and is recorded rather than reconciled.** ADR 0001
+rejected per-module `api/dependencies.py` — the layout `ARCHITECTURE.md` §2 and
+§9.1 specify — and preferred a single container, for a reason that still holds: the
+same `Depends(...)` plumbing repeated per module drifts. Nothing here duplicates
+anything; each provider is still defined exactly once. What changed is *where* the
+concerns live, which is ADR 0001's own "split by concern" consequence applied
+literally rather than within one module. ADR 0011 states the decision and the
+rejected alternatives, including the closer one — a `shared/dependencies/` package,
+which would keep every import path under `shared` but would also keep software
+management's use-case factories outside `software_management`, leaving the
+ownership error in place under a new path. ADRs are immutable once accepted, so
+this is a new ADR rather than an edit to 0001.
+
+The cost is that `ARCHITECTURE.md` §2, §9.1 and §15.1 now describe a layout the code
+does not use. That document was already behind the code in four places when Phase 1
+started; this adds three more, and Phase 9 corrects all of them.
+
+### Token verification moved next to the thing that signs tokens
+
+`decode_access_token`, `get_email_user` and `get_password_reset_user` were
+verified token *readers*, and they lived in the composition root while the tokens
+themselves were minted by `security/token_manager.py`. The two modules also each
+defined their own `oauth2_scheme`, `credentials_exception`, `EXPECTED_ISSUER`,
+`EXPECTED_PURPOSE` and `EXPECTED_RESET_PURPOSE` — byte-identical, as was
+`ACCESS_TOKEN_REQUIRED_CLAIMS`, which existed only in the copy that read tokens.
+
+Phase 2 recorded the same class-shape duplication for the storage exceptions
+(ADR 0003), and Phase 3 for `SoftwareAccessPolicy`; this is the third instance,
+which is what makes it a pattern rather than an accident. The readers moved to
+`token_manager.py`, one definition of each constant remains, and the duplicated
+copies are gone.
+
+Two consequences worth stating:
+
+**`auth_service` no longer imports the composition root.** It called
+`get_email_user` and `get_password_reset_user` as plain functions — not FastAPI
+dependencies — so this was an application service reaching into the module that
+wires the application together, for two pure functions. It now imports them from
+the module that owns tokens, alongside `TokenManager`, which it already imported.
+
+**They were renamed.** `get_email_user` returns the token's claims and never
+loads an account, so the name said the opposite of what it did;
+`decode_email_verification_token` pairs with `decode_access_token` and
+`decode_password_reset_token`. Internal names, so no contract moves.
+
+### Revalidation was the last ORM read on the request path
+
+```python
+stmt = (
+    select(UserSession, User)
+    .join(User, User.id == UserSession.user_id)
+    .where(UserSession.id == claims.session_id)
+)
+```
+
+`revalidate_access_token` built this itself, in the composition root, and read
+`revoked_at`, `expires_at`, `user.status` and `user.role` off the rows. That is
+repository work, a domain decision and a transport concern in one function, and
+it ran for essentially all authenticated traffic — so the code path that executed
+most often was the one with no domain model behind it, and the rules it applied
+were the rules no test could reach.
+
+It now asks `SessionRepository.get_by_id` and `UserRepository.get_user_by_id`, and
+decides with the aggregates: `UserSession.is_usable_at` for the session and
+`User.is_verified` for the account. The check order is unchanged — session exists,
+session live, `sub` matches the session's user, account verified — and every
+failure raised the same `credentials_exception`, so the order is not observable.
+
+**One query became two, on every request.** The old version joined; the new one
+looks the session up and then the account. The `sub`/`sid` mismatch is checked
+against the session's own `user_id` *before* the account lookup, so the one case
+that would waste a query still costs one. Keeping it at one would mean a port
+method returning "the account behind this session" — an authentication-shaped join
+inside the user context — to save a round trip per authenticated request. The two
+ports are more defensible and the cost is one local query; the alternative is
+recorded in the function's docstring rather than silently chosen.
+
+### A guard, because no existing rule would have noticed
+
+`tests/architecture/test_request_path_has_no_orm_models.py` parses the modules
+that resolve a request's identity and fails if any of them imports
+`infrastructure.database.models`.
+
+This is needed because the dependency modules sit at a context root, which none of
+the eight rules classify at all: R5 keys on the `_service.py` suffix, R6 on router
+filenames. This is the same hole R8 was written to close in Phase 3, one layer
+further out. Re-introducing the join is invisible in review and unmeasured in
+production, which is exactly the kind of regression the ratchet exists to prevent
+and which the ratchet cannot see.
+
+### A test that asserted nothing
+
+`test_session_belonging_to_another_user_is_rejected` claimed to prove that a valid
+session id cannot be paired with someone else's subject. It minted a token with
+`user_a`'s subject and `session_a`'s id, decoded it, and asserted the two matched
+— a statement about the token, not about revalidation. The mismatch it describes
+was never exercised, so the `sub`/`sid` check in
+`revalidate_access_token` could be deleted without failing anything.
+
+It now mints a token for `user_a` against `session_b` and requires a 401.
+Mutation-checked: removing the binding check fails it.
+
+### Twelve unreachable lines
+
+`get_current_user` ended with a `return`, followed by twelve lines that were the
+pre-revalidation implementation verbatim: a second `jwt.decode`, a `role` read out
+of the token payload, a `CurrentUser` built from it. They became unreachable when
+`5c9a5b5` added `revalidate_access_token` and made the database the authority —
+which is also what fixed the bug the module docstring in
+`test_current_user_and_route_guards.py` describes: the access token used to be the
+sole source of truth, so a demoted admin kept admin rights until the token
+expired. The code that would have caused exactly that was still in the file,
+twelve lines below the function that had superseded it. Deleted.
+
+### Behaviour is unchanged
+
+- Route table byte-identical to Phase 7a. 46 API entries (50 including the four
+  docs routes), SHA-256 of the sorted `METHOD PATH STATUS` lines
+  `954915f0bb3e1b5dbaa4730fa26fedbbdfbb0f7063b75e9c5b28c3ddb15c58f9` for the API
+  subset and `f17b93910a05b74f5c59f121835adedf90dcbb6275d830607f4014903ef1c6ea`
+  with the docs routes, both recomputed from a clean checkout of `667192c` and
+  from the working tree. The standing guard is
+  `test_route_table_is_unchanged`, which diffs added and removed entries against a
+  pinned `EXPECTED_ROUTES` and names any difference
+- 401 for a revoked, expired, unknown or cross-account session; 403 from
+  `require_role`; unchanged
+- A session storage failure is still a 500. It used to be an escaping
+  `SQLAlchemyError` and is now `SessionRepositoryUnavailableError`, whose handler
+  returns `{"detail": "Session storage unavailable"}` rather than the generic 500
+  body. Same status; a 500 body is not a contract, and the same substitution Phase
+  6b and 7a made elsewhere
+- `resolve_optional_user` still returns `None` rather than raising, so audit
+  attribution stays best-effort
+- 471 pass, 2 pre-existing `search_algorithm` failures
+- Ratchet unchanged at 1 (`R6`, `admin_router`, Phase 8) — 7b had no entries to
+  remove, because the files it touched were never violations under any rule
+
+### Left alone deliberately
+
+**`UserRepository.get_user_by_id` is the one read that does not translate driver
+errors.** Every other method in the user repository raises
+`UserRepositoryUnavailableError`; this one lets `SQLAlchemyError` escape, so
+revalidation has two different failure modes for the same class of problem. Adding
+the translation would be a behaviour change: `auth_service.login` catches
+`DomainError` and re-raises it as `UnauthorizedError`, so a database failure
+during login would become a **401 instead of a 500**. Same on the status code and
+a real change on what the client is told, and it is a question about what an
+outage should look like from outside rather than a cleanup. Phase 9.
+
+**The repositories stay `object` in both places they are consumed.**
+`revalidate_access_token` takes `session_repo`/`user_repo` as `object` and
+`AuthenticationUnitOfWork.session_repo` is still `object`, both because R2 forbids
+a bounded context from naming another context's ports. The proper fix is
+capability-shaped ports owned by the consuming context — which is the same item
+Phase 6b recorded, Phase 7a recorded, and Phase 7b has now recorded for a third
+time. Three phases of deferral is the signal that it should be scheduled, not
+carried: it is Phase 9's first item.
+
+**`token_manager.py` raises `HTTPException`.** `decode_access_token` and the two
+reset/verification decoders signal failure with a 401 carrying
+`WWW-Authenticate`, from a module that is not an API layer. It is pre-existing,
+every caller treats a failure as "unauthenticated", and changing it to a domain
+exception would mean editing every route that depends on it for no gain in
+correctness. Recorded because it is the kind of thing a reviewer will ask about.
+
+**`container.py` still builds the storage adapter and the signer.** It is
+process-wide singletons that `app/infrastructure/storage/local_storage.py`
+constructs with its own settings objects, and moving them would put an adapter's
+configuration next to the ports rather than in the shared kernel where it already
+is. The composition root imports them; it does not own them.
+
+**`analytics_router` still reaches into the security context.** It imports
+`CurrentUser`, `get_current_user`, `get_abuse_protection` and `alert_thresholds`
+from `app.modules.security.dependencies`, and builds its own `AuditService` from a
+concrete `UnitOfWork` rather than through `get_audit_service`. Phase 4 flagged
+this; Phase 8 owns analytics.

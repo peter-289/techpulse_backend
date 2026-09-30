@@ -8,7 +8,13 @@ from ...schema.user_schema import UserCreate, UserResponse, UserRead
 from ...application.services.user_service import UserService
 from app.infrastructure.database.unit_of_work import UnitOfWork
 from app.modules.authentication.auth_service import AuthService
-from app.modules.shared.dependencies import require_role, get_current_user, get_db, get_abuse_protection, CurrentUser
+from app.modules.shared.dependencies import get_db
+from app.modules.security.dependencies import (
+    CurrentUser,
+    get_abuse_protection,
+    get_current_user,
+    require_role,
+)
 from app.modules.shared.enums import RoleEnum
 from app.modules.security.abuse_protection import AbuseProtection
 

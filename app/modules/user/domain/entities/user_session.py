@@ -28,7 +28,7 @@ because SQLite returns one and the old inline comparison raised on it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
@@ -114,13 +114,22 @@ class UserSession:
     # === validity ===
 
     def is_expired_at(self, now: datetime) -> bool:
-        """Whether ``expires_at`` is at or before ``now``.
+        """Whether this session's validity window has closed by ``now``.
 
         The stored value can be naive: SQLite has no timezone type, so it hands
         back a naive ``datetime`` even for a ``DateTime(timezone=True)`` column.
         Comparing that against an aware ``now`` raises ``TypeError``, which is
         what the old inline comparison did.
+
+        A missing expiry counts as expired. The column is ``NOT NULL``, so a
+        detached entity can only reach this state by being hand-built, and a
+        session with no stated window has no interval in which it is valid. The
+        revalidation path this replaced had the same rule as an explicit
+        ``expires_at is None`` check; without it here, the comparison would
+        raise ``TypeError`` on ``None`` instead of rejecting the token.
         """
+        if self.expires_at is None:
+            return True
         return _as_utc(self.expires_at) <= _as_utc(now)
 
     def is_usable_at(self, now: datetime) -> bool:

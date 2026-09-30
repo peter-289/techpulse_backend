@@ -182,6 +182,46 @@ class TestGetByRefreshHash:
         assert reloaded.user_agent is None
 
 
+class TestGetById:
+    """The lookup access-token revalidation uses.
+
+    An access token carries the session id in its ``sid`` claim and no refresh
+    hash, so before Phase 7b the revalidation path joined the two ORM models
+    directly and this read did not exist.
+    """
+
+    @pytest.mark.asyncio
+    async def test_finds_a_session_by_primary_key(self, db) -> None:
+        created = await _repo(db).open_session(
+            user_id="user-1", refresh_token_hash="hash-1", expires_at=NOW
+        )
+        await db.commit()
+
+        found = await _repo(db).get_by_id(created.id)
+        assert isinstance(found, UserSession)
+        assert found.refresh_token_hash == "hash-1"
+        assert found.user_id == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_an_unknown_id(self, db) -> None:
+        assert await _repo(db).get_by_id(999_999) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_a_detached_entity(self, db) -> None:
+        created = await _repo(db).open_session(
+            user_id="user-1", refresh_token_hash="hash-1", expires_at=NOW
+        )
+        await db.commit()
+        db.expunge_all()
+
+        found = await _repo(db).get_by_id(created.id)
+        found.revoke(NOW)
+        await db.commit()
+
+        reloaded = await _repo(db).get_by_id(created.id)
+        assert reloaded.revoked_at is None
+
+
 class TestSave:
     @pytest.mark.asyncio
     async def test_updates_in_place_instead_of_inserting(self, db) -> None:
@@ -343,8 +383,13 @@ class TestErrorTranslation:
 
     @pytest.mark.asyncio
     async def test_a_failed_lookup_surfaces_as_a_domain_error(self, tableless_db) -> None:
-        with pytest.raises(SessionRepositoryUnavailableError):
-            await _repo(tableless_db).get_by_refresh_hash("h")
+        for call in (
+            _repo(tableless_db).get_by_id(1),
+            _repo(tableless_db).get_by_id(1),
+            _repo(tableless_db).get_by_refresh_hash("h"),
+        ):
+            with pytest.raises(SessionRepositoryUnavailableError):
+                await call
 
     @pytest.mark.asyncio
     async def test_a_failed_save_surfaces_as_a_domain_error(self, tableless_db) -> None:
@@ -362,6 +407,7 @@ class TestErrorTranslation:
             _repo(tableless_db).open_session(
                 user_id="u", refresh_token_hash="h", expires_at=NOW
             ),
+            _repo(tableless_db).get_by_id(1),
             _repo(tableless_db).get_by_refresh_hash("h"),
             _repo(tableless_db).save(_session(id=1)),
             _repo(tableless_db).revoke_user_sessions(user_id="u", revoked_at=NOW),

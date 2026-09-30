@@ -27,6 +27,7 @@ The boundary rules described here are executable:
 | 0008 | [Support chat gets a port, and the blocking call goes away with it](0008-support-chat-ai-port.md) | Accepted |
 | 0009 | [The User aggregate, and an explicit `save`](0009-user-aggregate-and-explicit-save.md) | Accepted |
 | 0010 | [`UserSession` is a user-context aggregate, and its writes are explicit](0010-user-session-aggregate-and-explicit-save.md) | Accepted |
+| 0011 | [One composition module per bounded context](0011-one-composition-module-per-bounded-context.md) | Accepted |
 
 ## Template
 
@@ -67,5 +68,6 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 6a | `user`/support chat: ChatMessage entity, AI provider port | 0001, 0002, 0008 |
 | 6b | `user`/`User` aggregate; explicit `save` on the user repository | 0001, 0002, 0009 |
 | 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 0001, 0002, 0010 |
-| 7b-8 | `shared.dependencies` split; per-module domain models | 0001 |
-| 9 | Ratchet drained, tests re-enabled, docs corrected | 0004 |
+| 7b | `shared.dependencies` split by context; revalidation off the ORM | 0001, 0011 |
+| 8 | `analytics`; `admin_router` queries | 0001 |
+| 9 | Ratchet drained, tests re-enabled, docs corrected | 0001, 0004 |

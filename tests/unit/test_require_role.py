@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.modules.shared.dependencies import (
+from app.modules.security.dependencies import (
     CurrentUser,
     _normalize_role,
     require_role,

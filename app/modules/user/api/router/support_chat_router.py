@@ -2,12 +2,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.unit_of_work import UnitOfWork
-from app.modules.shared.dependencies import (
-    CurrentUser,
-    get_current_user,
-    get_db,
-    get_support_ai,
-)
+from app.modules.shared.dependencies import get_db
+from app.modules.security.dependencies import CurrentUser, get_current_user
+from app.modules.user.dependencies import get_support_ai
 from app.modules.user.application.services.support_chat_service import SupportChatService
 from app.modules.user.domain.ports.support_ai import SupportAI
 from app.modules.user.schema.support_chat_schema import (

@@ -19,6 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MODULES = [
     "app.modules.shared.dependencies",
+    "app.modules.security.dependencies",
+    "app.modules.software_management.dependencies",
+    "app.modules.user.dependencies",
+    "app.modules.security.token_manager",
     "app.infrastructure.database.unit_of_work",
     "app.modules.resource.application.services.resource_service",
     "app.modules.resource.api.routers.resources_router",
@@ -52,7 +56,12 @@ def test_dependencies_imports_before_app_main() -> None:
     result = _run(
         """
         import app.modules.shared.dependencies as deps
-        assert deps.CurrentUser is not None
+        import app.modules.security.dependencies as security_deps
+        assert deps.get_db is not None
+        assert deps.get_redis is not None
+        assert deps.get_unit_of_work is not None
+        assert security_deps.CurrentUser is not None
+        assert security_deps.get_current_user is not None
         print("OK")
         """
     )

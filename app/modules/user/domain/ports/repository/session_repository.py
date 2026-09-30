@@ -44,6 +44,14 @@ class SessionRepository(Protocol):
         """
         ...
 
+    async def get_by_id(self, session_id: int) -> UserSession | None:
+        """Return the session with this id, if any.
+
+        How access-token revalidation reaches a session: the token carries the
+        session id in its ``sid`` claim, not the refresh-token hash.
+        """
+        ...
+
     async def get_by_refresh_hash(self, refresh_hash: str) -> UserSession | None:
         """Return the session holding this refresh-token hash, if any.
 

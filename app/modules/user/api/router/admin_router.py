@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.shared.dependencies import CurrentUser, require_role, get_db
+from app.modules.shared.dependencies import get_db
+from app.modules.security.dependencies import CurrentUser, require_role
 from app.modules.shared.enums import RoleEnum
 from app.infrastructure.database.models.audit_event import AuditEvent
 from app.infrastructure.database.models.security_alert import SecurityAlert

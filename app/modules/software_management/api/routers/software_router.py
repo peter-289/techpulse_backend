@@ -5,15 +5,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 
-from app.modules.shared.dependencies import (
+from app.modules.security.dependencies import (
     CurrentUser,
-    get_category_service,
+    get_abuse_protection,
     get_current_user,
+    require_role,
+)
+from app.modules.software_management.dependencies import (
+    get_artifact_stager,
+    get_category_service,
     get_download_service,
     get_software_service,
-    require_role,
-    get_abuse_protection,
-    get_artifact_stager,
     upload_limits,
 )
 
