@@ -24,7 +24,13 @@ db.sqlite3
 # GET /api/v1/software-management/storage/download/{storage_key}, not source.
 # Tracking them puts arbitrary uploaded files (including .py) into version
 # control.
-storage/
+#
+# Anchored to the repository root. An unanchored ``storage/`` matches a
+# directory of that name at *any* depth, which silently swallowed
+# ``app/infrastructure/storage/`` -- so ``local_artifact_stager.py`` was never
+# committed and a fresh clone could not import the application.
+# ``app/infrastructure/storage/`` -- a source directory, not this one.
+/storage/
 
 # Codebase 
 .vscode/
