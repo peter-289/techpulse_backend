@@ -182,10 +182,21 @@ def test_revoke_session_is_awaitable() -> None:
     import inspect
 
     from app.modules.user.infrastructure.persistence.repository.session_repo import (
-        SessionRepo,
+        SQLAlchemySessionRepository,
     )
 
-    assert inspect.iscoroutinefunction(SessionRepo.revoke_session)
+    # Phase 7a folded ``revoke_session`` into the aggregate, so the guarantee is
+    # now spread over the methods ``AuthService`` actually awaits on the session
+    # repository. All of them are listed, because a single ``def`` among them is
+    # the same logout-breaking bug.
+    for name in (
+        "open_session",
+        "get_by_refresh_hash",
+        "save",
+        "revoke_user_sessions",
+    ):
+        method = getattr(SQLAlchemySessionRepository, name)
+        assert inspect.iscoroutinefunction(method), f"{name} is not awaitable"
 
 
 def test_access_token_carries_binding_claims(tokens) -> None:

@@ -16,6 +16,9 @@ from typing import Protocol, runtime_checkable
 from app.modules.user.domain.ports.repository.chat_message_repository import (
     ChatMessageRepository,
 )
+from app.modules.user.domain.ports.repository.session_repository import (
+    SessionRepository,
+)
 from app.modules.user.domain.ports.repository.user_repository import UserRepository
 from app.modules.shared.unit_of_work import UnitOfWorkPort
 
@@ -37,11 +40,14 @@ class UserUnitOfWork(UnitOfWorkPort, Protocol):
         ...
 
     @property
-    def session_repo(self) -> object:
+    def session_repo(self) -> SessionRepository:
         """Aggregate repository for UserSession.
 
-        Still ``object``: Phase 7 introduces the UserSession model and converts
-        the remaining implicit-flush writes in ``auth_service``.
+        The session record belongs to the user context; the authentication
+        context decides *about* sessions and drives them through this port.
+        Entities come back detached, so a mutation needs an explicit ``save`` --
+        rotation and revocation both used to rely on autoflush instead, and both
+        returned success whether or not the write landed.
         """
         ...
 

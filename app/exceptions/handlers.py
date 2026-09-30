@@ -54,6 +54,7 @@ from app.modules.user.domain.exceptions import (
     UserNotFoundError,
     DuplicateUserError,
     UserRepositoryUnavailableError,
+    SessionRepositoryUnavailableError,
     ChatMessageDomainError,
     ChatMessageTooShortError,
     ChatMessageRepositoryUnavailableError,
@@ -298,6 +299,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(UserRepositoryUnavailableError)
     async def _user_repository_unavailable_handler(_request: Request, exc: UserRepositoryUnavailableError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
+
+    @app.exception_handler(SessionRepositoryUnavailableError)
+    async def _session_repository_unavailable_handler(_request: Request, exc: SessionRepositoryUnavailableError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
 
     # 503 for parity with the ExternalServiceError this replaced. Unreachable in

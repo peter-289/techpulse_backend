@@ -24,7 +24,8 @@ shape, that is called out explicitly as a breaking change and justified.
 | 5 | `resource` domain model | 266 pass, 2 pre-existing fail | 0001, 0002, 0004, 0007 | merged |
 | 6a | `user`/support-chat: ChatMessage entity, AI provider port | 308 pass, 2 pre-existing fail | 0001, 0002, 0004, 0008 | merged |
 | 6b | `user`/`User` aggregate; explicit `save` on the user repository | 394 pass, 2 pre-existing fail | 0001, 0002, 0009 | merged |
-| 7 | `authentication`; split `dependencies.py` | — | — | pending |
+| 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 456 pass, 2 pre-existing fail | 0001, 0002, 0010 | merged |
+| 7b | split `shared/dependencies.py`; revalidation off the ORM | — | — | pending |
 | 8 | `analytics`; `admin_router` queries | — | — | pending |
 | 9 | Drain ratchet, re-enable tests, correct `ARCHITECTURE.md` | — | — | pending |
 
@@ -133,10 +134,10 @@ $ python -m tests.architecture.layer_rules
 [ok]        R2: a module must not import another module's domain layer (use app.modules.shared)
 [ok]        R3: domain must not import infrastructure (ports belong in domain, implementations in infrastructure)
 [ok]        R4: application must not import api/schema/infrastructure
-[ratcheted] R5: 2 known violation(s) recorded in the ratchet -- an application service must not import an ORM model (it has no domain object)
+[ok]        R5: an application service must not import an ORM model (it has no domain object)
 [ratcheted] R6: 1 known violation(s) recorded in the ratchet -- an API router must not build SQLAlchemy statements
 [ok]        R7: a module's API layer must not import another module's API layer
-[ratcheted] R8: 2 known violation(s) recorded in the ratchet -- an application service must not import the web framework, the ORM, or the filesystem
+[ok]        R8: an application service must not import the web framework, the ORM, or the filesystem
 ```
 
 | Rule | Statement | Baseline | Now |
@@ -145,10 +146,10 @@ $ python -m tests.architecture.layer_rules
 | R2 | no cross-context `domain/` imports | 6 | 0 — **fixed in Phase 1** |
 | R3 | domain imports no infrastructure | 0 | 0 — hard |
 | R4 | application imports no `api`/`schema`/`infrastructure` | 1 | 0 — **fixed in Phase 6b** |
-| R5 | no service imports an ORM model | 7 | 2 — `auth_service` only, Phase 7 |
+| R5 | no service imports an ORM model | 7 | 0 — **fixed in Phase 7a** |
 | R6 | routers build no SQLAlchemy statements | 1 | 1 — `admin_router`, Phase 8 |
 | R7 | no cross-context `api/` imports | 0 | 0 — hard |
-| R8 | services import no web framework, ORM, or filesystem | 0 | 2 — `auth_service` only, Phase 7 |
+| R8 | services import no web framework, ORM, or filesystem | 0 | 0 — **fixed in Phase 7a** |
 
 The R2 row deserves a note, because the count went *up* before it went to zero.
 Introducing the per-context `UnitOfWork` ports in Phase 2 made the shared
@@ -968,7 +969,7 @@ invisible — the code moves, the tests keep passing, and only a client notices.
 
 | Entry | Owner |
 |---|---|
-| R5 ×2, R8 ×2 — all `auth_service.py` | Phase 7 |
+| R5 ×2, R8 ×2 — all `auth_service.py` | Phase 7 — **resolved in Phase 7a** |
 | R6 ×1 — `admin_router.py` | Phase 8 |
 
 `UserUnitOfWork.user_repo` is now typed. `session_repo` stays `object` until
@@ -1001,3 +1002,196 @@ future fix is a deliberate change.
 column is `String(500)` and SQLite does not enforce it, so on Postgres an over-long
 SMTP error would turn a bookkeeping write into a 500. The domain stores the message
 whole and the mapper fits it to the column, which is where the width is known.
+
+## Phase 7a — `UserSession`, and the last autoflush in `auth_service`
+
+Scope note: this phase was split in two on purpose. The user context's session
+record and the ratchet went first; the `app/modules/shared/dependencies.py` split
+was deferred to Phase 7b. Doing the aggregate first meant the ORM reads there had
+a port to migrate onto rather than being rewritten twice.
+
+### Two writes were vanishing, the same way as Phase 6b's five
+
+`UserSession` was an ORM row that `auth_service` mutated in place and persisted
+by accident. The mechanism is the same as ADR 0009's: the unit of work commits
+on exit, but a later read in the same transaction autoflushes pending changes as
+a side effect. So the write landed only if a read happened to follow it.
+
+| Site | Mutation | Symptom if made implicit |
+|---|---|---|
+| `_rotate_session` | `refresh_token_hash = new` | the old refresh token keeps working after rotation — a rotated session is still live |
+| `_rotate_session` | `last_used_at`, `user_agent`, `ip_address` | rotation is a no-op, so session audit data is never updated |
+| `logout` | `revoked_at = now` | logout returns 200, clears the cookies, and the session **stays alive** |
+
+The logout case is the one worth stating plainly: it looked like it worked. The
+cookies were cleared, the client believed it was signed out, and the refresh
+token behind it was still valid. The same write was pinned in
+`test_auth_hardening.py` as `revoke_session` needing to be a coroutine — it had
+been a plain `def` that the service awaited, so logout 500'd before reaching the
+cookie-clearing code at all. Two bugs, same method, opposite symptoms, and
+neither was visible from a fake-repository unit test.
+
+### The safety net, and proving it bites twice
+
+`tests/integration/test_session_write_paths.py` — 13 tests against real SQLite,
+reading back through a second session. It was written before any production line
+changed, and proven to bite by detaching rows inside
+`get_by_refresh_hash`. After the conversion it was proven again from the other
+direction, by deleting both `save()` calls:
+
+```
+FAILED test_rotating_a_session_persists_the_new_refresh_hash
+FAILED test_rotating_persists_last_used_at
+FAILED test_rotating_updates_the_user_agent_and_ip
+FAILED test_the_rotated_session_keeps_its_id
+FAILED test_revoking_a_session_persists_revoked_at
+FAILED test_a_revoked_session_cannot_be_rotated_afterwards
+FAILED test_revoking_leaves_other_sessions_alone
+7 failed, 6 passed
+```
+
+The same 7-failure signature as the pre-conversion mutation, which is the useful
+part: the net was measuring the behaviour before and after, and both endpoints
+agree.
+
+### The aggregate holds three invariants that were open-coded
+
+| Was | Now |
+|---|---|
+| `Session(refresh_token_hash=..., ...)` | `UserSession.open(user_id, refresh_token_hash, expires_at, user_agent, ip_address)` |
+| `session.refresh_token_hash = new_hash` | `session.rotate(new_refresh_token_hash, rotated_at, user_agent, ip_address)` |
+| `session.revoked_at = now` | `session.revoke(now)` |
+
+The non-obvious ones, all now pinned by 26 entity tests:
+
+**`rotate` must not blank the agent.** A browser refresh is cookie-less and sends
+no `User-Agent`. Assigning the new value unconditionally would erase the
+recorded agent on every rotation, so a cookie-less session ends up with a null
+user agent after its first refresh. The old code only avoided this by accident,
+because rotation passed the request-derived values and the field happened to be
+set. `rotate` ignores `None` and empty strings.
+
+**`revoke` keeps the first `revoked_at`.** The bulk password-reset revocation
+runs a second time whenever a reset is retried, and a second logout on an
+already-revoked session is reachable by design. That timestamp is when the
+session actually died; overwriting it with a later observation would be a small
+falsehood about the past. `revoke_user_sessions` filters on
+`revoked_at.is_(None)` for the same reason.
+
+**`rotate` must not change `id`.** The access token stays bound to the session
+id across a rotation, which is precisely the mechanism by which revoking a
+session invalidates its access token. Changing the id would leave a revoked
+session's access token permanently un-revokable.
+
+`revoke` and `rotate` are deliberately asymmetric about overwriting a timestamp:
+`revoke` records a past fact, so the first observation wins; `rotate` records
+current usage, so the latest wins. Making them symmetric would have been tidier
+and wrong for one of them.
+
+### A TypeError that only fired on SQLite
+
+`expires_at` is `DateTime(timezone=True)`, but SQLite has no timezone type and
+returns a naive `datetime`. The old inline comparison in `_rotate_session` did
+`expires_at <= now` against an aware `datetime`, which raises `TypeError`. On
+Postgres it worked; on the SQLite the test suite runs against, session
+revalidation would fail. `_as_utc` in the entity normalises on read, matching the
+convention the Phase 6b entities already set.
+
+The mapper stays a plain field copy rather than normalising there, which means an
+entity read from the database can hold a naive `expires_at`. That is a real
+consequence and it is the reason `is_expired_at` must never compare raw — the
+entity tests assert the naive cases directly so the trap is documented rather
+than left to be rediscovered.
+
+### `revoke_user_sessions` stays a bulk UPDATE
+
+Password reset revokes sessions it has not loaded, and would not be written to
+visit each one. What changed is that it now runs inside
+`async with UnitOfWork(...)`, so the commit is explicit rather than a side effect
+of a later read. The detached-entity change does not affect it, and the test
+covers it against a real database anyway.
+
+### `save` uses `merge`, and that is asserted
+
+Same as Phase 6b: the port returns detached entities, so `add` would attempt an
+`INSERT` against an existing primary key. Two repository tests count rows after
+saving, because "update or insert a duplicate" is the entire question this method
+answers. `to_model` also omits `created_at`, so a `save()` cannot overwrite the
+column's server default with whatever a detached entity happened to hold; that
+is asserted too.
+
+### One test had to be rewritten, and the guarantee kept
+
+`test_revoke_session_is_awaitable` pinned `SessionRepo.revoke_session` being a
+coroutine. That method no longer exists — the mutation moved onto the entity.
+The *guarantee* is still real, so the test now checks all four methods
+`AuthService` awaits on the session repository. A single `def` among them is the
+same logout-breaking bug, and a test that names one method would have missed a
+second.
+
+### R2 blocked the obvious fix, so the port stays `object`
+
+`AuthenticationUnitOfWork.session_repo` is `object`, and could not be narrowed to
+`SessionRepository`: R2 rejects a bounded context importing another context's
+`domain`, *including its ports* — only `app/infrastructure/**` and
+`app/modules/shared/**` are port readers. R2 is a hard rule with a zero-violation
+ratchet, so it cannot be ratcheted either. The concrete `UnitOfWork` does the
+wiring, legally.
+
+The proper fix is a capability-shaped port owned by the authentication context,
+declaring `open`/`rotate`/`revoke` and satisfied structurally by
+`SessionRepository`. That is a second description of one repository — a decision
+about where the capability belongs, not a mechanical narrowing — so it is recorded
+as a Phase 9 item instead of being done here. It is the same gap ADR 0009
+recorded for `verify` and `set_password_hash`, now repeated for sessions, and
+ADR 0010 states it as a known typing gap rather than a settled design.
+
+### An unrelated import removal would have broken revalidation
+
+Removing the ORM `User` and `UserSession` imports from `auth_service` also
+removed `UserStatus`, which the service still uses to check `user.status ==
+UserStatus.VERIFIED` before rotating. It is restored from
+`app.modules.shared.enums`, which is the shared kernel and always permitted. The
+suite caught it; the note is here because the three imports sat in one block and
+looked like the same category.
+
+### Behaviour is unchanged
+
+- Route table byte-identical, checked by `test_public_http_surface.py`
+- No schema change; session rows have the same columns
+- Login, refresh, logout, and password-reset status codes unchanged
+- Session storage failure was a 500 before (escaping `SQLAlchemyError`) and is a
+  500 now (`SessionRepositoryUnavailableError` with a log line). Not 503: the
+  escaping error was never retriable from the client's side and changing the
+  status would have been a behaviour change
+- 456 pass, 2 pre-existing `search_algorithm` failures
+- Ratchet 5 → 1
+
+### Remaining ratchet, and who owns it
+
+| Entry | Owner |
+|---|---|
+| R6 ×1 — `admin_router.py` | Phase 8 |
+
+`tests/architecture/test_layer_boundaries.py` fails on a ratchet entry whose
+violation no longer occurs, so the four `auth_service.py` entries were deleted in
+this commit rather than left to rot. Five of eight rules are now clean with no
+ratchet entries at all.
+
+### Left alone deliberately
+
+**`dependencies.py` revalidation still reads the session through the ORM.** It is
+the remaining ORM read in the request path that no domain model serves. Deferred
+to Phase 7b by the scope decision, and it is the reason 7b is not a formality.
+
+**`auth_service` calls `rotate` and `revoke` structurally**, on an entity whose
+type R2 does not permit it to name. Real gap, described above.
+
+**A forgotten `save` is still silent at runtime.** Not silent in the suite: the
+five sites are pinned, and the mutation check is recorded above so the next
+person can re-run it rather than trust it. A sixth site added later needs its own
+test, or a lint rule for methods that mutate a returned entity in place. That
+rule is the only real fix and it is not in place.
+
+**`admin_router` still reads both ORM models** and builds queries — the last
+ratchet entry, Phase 8.

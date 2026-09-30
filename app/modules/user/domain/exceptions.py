@@ -52,3 +52,11 @@ class UserRepositoryUnavailableError(UserDomainError):
     Mapped to 500, not 503, because that is what an escaping driver error
     produced before the port existed.
     """
+
+
+class SessionRepositoryUnavailableError(UserDomainError):
+    """The session store could not be reached.
+
+    Mapped to 500, not 503, for the same reason as
+    :class:`UserRepositoryUnavailableError`.
+    """

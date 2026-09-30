@@ -1,24 +1,20 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import logging
-from fastapi.concurrency import run_in_threadpool
 
 from app.modules.user.application.services.rules import validate_password_strength
 from app.modules.security.password_manager import hash_password, verify_password
 from app.modules.security.token_manager import TokenManager
 from app.modules.authentication.domain.ports.unit_of_work import AuthenticationUnitOfWork
-from app.exceptions.exceptions import UnauthorizedError, DomainError, NotFoundError, UnauthorizedError
+from app.exceptions.exceptions import UnauthorizedError, DomainError, NotFoundError
 from app.modules.shared.enums import UserStatus
-from app.infrastructure.database.models.session import UserSession
 from app.infrastructure.email.email_service.email_worker import queue_verification_email
 from app.infrastructure.email.email_service.email_service import send_password_reset_email
 from app.core.config import settings
 from app.modules.shared.dependencies import get_email_user, get_password_reset_user
-from app.infrastructure.database.models.user import User
 from app.modules.security.abuse_protection import AbuseProtection
-
-from sqlalchemy.exc import SQLAlchemyError
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -83,7 +79,7 @@ class AuthService:
                 # Always run Argon2, even when the username is unknown, so the
                 # response time does not disclose whether the account exists.
                 stored_hash = user.password_hash if user else _dummy_password_hash()
-                verified_hash = await run_in_threadpool(verify_password, stored_hash, password)
+                verified_hash = await asyncio.to_thread(verify_password, stored_hash, password)
 
                 if not user or not verified_hash:
                     raise DomainError("Invalid username or password")
@@ -98,8 +94,6 @@ class AuthService:
                     await self.uow.user_repo.save(user)
         except DomainError:
             raise UnauthorizedError("Invalid username or password")
-        except SQLAlchemyError as e: 
-            raise DomainError("Database error") from e
         return user
     
 
@@ -155,15 +149,16 @@ class AuthService:
         refresh_hash = self._hash_refresh_token(refresh_token)
         expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
-        session = UserSession(
-            user_id=user_id,
-            refresh_token_hash=refresh_hash,
-            expires_at=expires_at,
-            user_agent=user_agent,
-            ip_address=ip_address,
-        )
         async with self.uow:
-            session = await self.uow.session_repo.add_session(session)
+            # The repository builds the entity: this context drives the user
+            # context's session port but may not import its entity (R2).
+            session = await self.uow.session_repo.open_session(
+                user_id=user_id,
+                refresh_token_hash=refresh_hash,
+                expires_at=expires_at,
+                user_agent=user_agent,
+                ip_address=ip_address,
+            )
         return refresh_token, session
 
     # Request password reset and apply rate limiting.
@@ -203,8 +198,16 @@ class AuthService:
         return "If email is registered you will recieve an email with a reset link."
 
 
-    async def reset_password(self, token: str, new_password: str, confirm_password: str) -> User:
-        """Reset password."""
+    async def reset_password(
+        self, token: str, new_password: str, confirm_password: str
+    ) -> object:
+        """Reset a password and revoke every session the user holds.
+
+        Returns the ``User`` it re-hashed, with no annotation: this context may
+        not name the user context's entity (R2), and an unevaluated annotation
+        would still be an import to the boundary checker. The caller is
+        ``auth_router``, which only logs the id.
+        """
         if new_password != confirm_password:
             raise UnauthorizedError("Passwords do not match")
         validate_password_strength(new_password)
@@ -216,7 +219,7 @@ class AuthService:
             user = await self.uow.user_repo.get_user_by_id(payload["user_id"])
             if not user:
                 raise UnauthorizedError("Invalid token")
-            user.set_password_hash(await run_in_threadpool(hash_password, new_password))
+            user.set_password_hash(await asyncio.to_thread(hash_password, new_password))
             await self.uow.user_repo.save(user)
             await self.uow.session_repo.revoke_user_sessions(
                 user_id=user.id,
@@ -249,10 +252,16 @@ class AuthService:
                 raise UnauthorizedError("Email not approved")
 
             new_refresh = secrets.token_urlsafe(32)
-            session.refresh_token_hash = self._hash_refresh_token(new_refresh)
-            session.last_used_at = now
-            session.user_agent = user_agent or session.user_agent
-            session.ip_address = ip_address or session.ip_address
+            session.rotate(
+                new_refresh_token_hash=self._hash_refresh_token(new_refresh),
+                rotated_at=now,
+                user_agent=user_agent,
+                ip_address=ip_address,
+            )
+            # This line did not exist. Rotation used to depend on session
+            # autoflush, so a lost write left the old refresh token working
+            # while the client was handed a new one it could never use.
+            await self.uow.session_repo.save(session)
             session_id = session.id
 
         # The rotated access token stays bound to the same session, so revoking
@@ -270,7 +279,10 @@ class AuthService:
             session = await self.uow.session_repo.get_by_refresh_hash(refresh_hash)
             if not session:
                 return
-            await self.uow.session_repo.revoke_session(session=session, revoked_at=now)
+            session.revoke(now)
+            # Also autoflush-dependent before, with the same consequence:
+            # logout returned 200 and the session stayed usable.
+            await self.uow.session_repo.save(session)
     
     # Hash the refresh token
     def _hash_refresh_token(self, refresh_token: str) -> str:

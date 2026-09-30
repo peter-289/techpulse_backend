@@ -26,6 +26,7 @@ The boundary rules described here are executable:
 | 0007 | [Give the resource context a domain model](0007-resource-domain-model.md) | Accepted |
 | 0008 | [Support chat gets a port, and the blocking call goes away with it](0008-support-chat-ai-port.md) | Accepted |
 | 0009 | [The User aggregate, and an explicit `save`](0009-user-aggregate-and-explicit-save.md) | Accepted |
+| 0010 | [`UserSession` is a user-context aggregate, and its writes are explicit](0010-user-session-aggregate-and-explicit-save.md) | Accepted |
 
 ## Template
 
@@ -65,5 +66,6 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 5 | `resource` domain model | 0001, 0002, 0007 |
 | 6a | `user`/support chat: ChatMessage entity, AI provider port | 0001, 0002, 0008 |
 | 6b | `user`/`User` aggregate; explicit `save` on the user repository | 0001, 0002, 0009 |
-| 7-8 | Per-module domain models, in dependency order | 0001 |
+| 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 0001, 0002, 0010 |
+| 7b-8 | `shared.dependencies` split; per-module domain models | 0001 |
 | 9 | Ratchet drained, tests re-enabled, docs corrected | 0004 |
