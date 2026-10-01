@@ -82,13 +82,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Apply migrations
+- name: Apply migrations
         env:
           DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/techpulse
           DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/techpulse
           SECRET_KEY: ci-secret-key-not-for-production-use-0123456789abcd
-          EMAIL_VERIFY_SECRET: ci-email-verify-secret-not-for-production-0123456789
+          EMAIL_VERIFY_SECRET: ci-email-verify-secret-not-for-production-012345678
           PASSWORD_RESET_SECRET: ci-password-reset-secret-not-for-production-012345678
+          # Revision 8dea867ad60e drops three tables and refuses to run without
+          # this acknowledgement. CI has no data to lose and must exercise the
+          # real upgrade path, so it opts in explicitly rather than bypassing
+          # the gate.
+          TECHPULSE_ALLOW_DESTRUCTIVE_MIGRATIONS: "1"
         run: python -m alembic upgrade head
 
       - name: Check models match migrations
@@ -96,6 +101,6 @@ jobs:
           DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/techpulse
           DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/techpulse
           SECRET_KEY: ci-secret-key-not-for-production-use-0123456789abcd
-          EMAIL_VERIFY_SECRET: ci-email-verify-secret-not-for-production-0123456789
+          EMAIL_VERIFY_SECRET: ci-email-verify-secret-not-for-production-012345678
           PASSWORD_RESET_SECRET: ci-password-reset-secret-not-for-production-012345678
         run: python -m alembic check

@@ -9,6 +9,31 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
+_VALID_ENVIRONMENTS = {"development", "staging", "production", "test"}
+
+#: Passwords that appear in templates, tutorials and breach lists. Refused for
+#: the seeded superuser, where the value is the only thing standing between an
+#: unauthenticated caller and the admin API.
+_PLACEHOLDER_PASSWORDS = {
+    "change_me", "changeme", "changeit", "password", "admin",
+    "secret", "replace_me", "replaceme", "placeholder", "todo",
+    "admin123", "password123", "letmein",
+}
+
+_MIN_SUPERUSER_PASSWORD_LENGTH = 12
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _split_origins(raw: str) -> list[str]:
+    """Split a comma-separated origin list the way main.py normalises it."""
+    origins: list[str] = []
+    for item in (raw or "").split(","):
+        clean = item.strip().rstrip("/")
+        if clean and clean not in origins:
+            origins.append(clean)
+    return origins
+
 def _normalize_smtp_host(value: str) -> str:
     host = (value or "").strip()
     if not host:
@@ -85,9 +110,33 @@ class AppSettings(BaseSettings):
     # the app AND strips these headers from inbound client requests; otherwise the
     # client can spoof a fresh IP per request to bypass every IP rate limit
     # (including the login brute-force limiter).
+    # This is the single switch: docker-entrypoint.sh derives uvicorn's
+    # --proxy-headers flag from it, so the server and application layers cannot
+    # disagree. See docs/adr/0015-proxy-header-trust-is-decided-in-one-place.md.
     TRUST_PROXY_HEADERS: bool = False
 
-    
+    # Deployment
+    ENVIRONMENT: str = "development"
+    SERVE_API_DOCS: bool | None = None
+
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT == "production"
+
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        """Whether /docs, /redoc and /openapi.json are served.
+
+        Off in production so the full route surface is not published. An
+        explicit SERVE_API_DOCS overrides the environment either way, which is
+        what lets the surface test pin those routes without depending on it.
+        """
+        if self.SERVE_API_DOCS is not None:
+            return self.SERVE_API_DOCS
+        return not self.is_production
+
 
     @property
     def REDIS_URL(self) -> str:
@@ -181,7 +230,11 @@ class AppSettings(BaseSettings):
     TRANSCRIPTION_BASE_URL: str = ""
 
     # Startup superuser seeding
-    STARTUP_RUN_MIGRATIONS: bool = True
+    #
+    # There is deliberately no STARTUP_RUN_MIGRATIONS here. Schema changes run
+    # as their own one-shot step (the `migrate` service in docker-compose.yml),
+    # not from the application lifecycle, so that a restart or a rolling deploy
+    # can never run a migration as a side effect of starting a web worker.
     SUPERUSER_SEED_ENABLED: bool = True
     SUPERUSER_FULL_NAME: str = ""
     SUPERUSER_USERNAME: str = ""
@@ -215,6 +268,11 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def normalize_and_validate(self) -> "AppSettings":
+        self.ENVIRONMENT = (self.ENVIRONMENT or "development").strip().lower()
+        if self.ENVIRONMENT not in _VALID_ENVIRONMENTS:
+            raise RuntimeError(
+                f"ENVIRONMENT must be one of {sorted(_VALID_ENVIRONMENTS)}."
+            )
 
         # Database URLs
         self.DATABASE_URL_ASYNC= _normalize_database_url(self.DATABASE_URL_ASYNC)
@@ -278,6 +336,65 @@ class AppSettings(BaseSettings):
         _assert_min_secret("SECRET_KEY", self.SECRET_KEY or "")
         _assert_min_secret("EMAIL_VERIFY_SECRET", self.EMAIL_VERIFY_SECRET or "")
         _assert_min_secret("PASSWORD_RESET_SECRET", self.PASSWORD_RESET_SECRET or "")
+        self._validate_superuser_credentials()
+        self._validate_production_cors()
+
+
+    def _validate_production_cors(self) -> None:
+        """A production deployment must name a real frontend origin.
+
+        FRONTEND_URL defaults to a loopback address, and it seeds an
+        ``allow_credentials=True`` CORS allowlist. Left at the default in
+        production, any page a developer happens to have open on their own
+        machine could make authenticated cross-origin calls. A browser only
+        ever sends the origin the user actually navigated to, so a real
+        deployment can always name its real frontend here.
+        """
+        if not self.is_production:
+            return
+
+        for origin in _split_origins(self.FRONTEND_URL):
+            host = (urlparse(origin).hostname or "").strip().lower()
+            if host in _LOOPBACK_HOSTS:
+                raise RuntimeError(
+                    f"FRONTEND_URL is {origin!r}, a loopback origin, while "
+                    f"ENVIRONMENT=production. CORS is credentialed, so this "
+                    f"would let any page on a developer's machine make "
+                    f"authenticated calls. Set FRONTEND_URL to the public "
+                    f"frontend origin."
+                )
+
+
+    def _validate_superuser_credentials(self) -> None:
+        """Refuse to seed an admin from a template or trivially weak password.
+
+        Checked at start-up rather than at import so a stray value cannot take
+        the whole test collection down, but before anything is seeded. A
+        seeded superuser is an unauthenticated path to full administrative
+        access, and ``.env.example`` used to ship a working pair
+        (``SUPERUSER_SEED_ENABLED=true`` with ``SUPERUSER_PASSWORD=change_me``)
+        that nothing rejected.
+        """
+        if not self.SUPERUSER_SEED_ENABLED:
+            return
+
+        password = (self.SUPERUSER_PASSWORD or "").strip()
+        if not password:
+            # seed_superuser skips and warns; not an error.
+            return
+
+        if password.lower() in _PLACEHOLDER_PASSWORDS:
+            raise RuntimeError(
+                "SUPERUSER_PASSWORD is a placeholder value. It would seed an "
+                "administrator account reachable with a password published in "
+                "the template. Set a real one, or set SUPERUSER_SEED_ENABLED=false."
+            )
+        if len(password) < _MIN_SUPERUSER_PASSWORD_LENGTH:
+            raise RuntimeError(
+                f"SUPERUSER_PASSWORD must be at least "
+                f"{_MIN_SUPERUSER_PASSWORD_LENGTH} characters when "
+                f"SUPERUSER_SEED_ENABLED is true."
+            )
 
 
 settings = AppSettings()

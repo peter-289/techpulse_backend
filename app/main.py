@@ -35,12 +35,25 @@ class IterableFastAPI(FastAPI):
 
 
 # Initialize app
+# No `proxy_headers=` argument here on purpose. FastAPI does not accept it:
+# it falls into **extra and is silently discarded (Starlette has no such
+# parameter), so passing it only looks like it configures trust without doing
+# anything. Whether X-Forwarded-For is believed is decided at the uvicorn
+# layer, and docker-entrypoint.sh derives uvicorn's flag from
+# settings.TRUST_PROXY_HEADERS so there is exactly one switch. See
+# app/modules/security/abuse_protection.py::get_client_ip for the
+# application-side half of that decision.
 app = IterableFastAPI(
     title="TechPulse Backend",
     description="This is a backend service for Tech pulse web application.",
     version="1.0.0",
     lifespan=app_lifespan,
-    proxy_headers=True
+    # Publishing these exposes the whole route surface, which is a map of the
+    # application for anyone who can reach it. Off in production; set
+    # SERVE_API_DOCS to override explicitly either way.
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
 )
 
 
@@ -60,14 +73,20 @@ def _normalize_origins(raw_origins: str) -> list[str]:
 
 # Origins
 origins = _normalize_origins(settings.FRONTEND_URL)
-for fallback_origin in (
-    "http://localhost:3000", 
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-):
-    if fallback_origin not in origins:
-        origins.append(fallback_origin)
+# The loopback fallbacks are a development convenience. In production they are
+# not added: allow_credentials=True means any origin on this list can make
+# authenticated cross-origin calls, and leaving localhost enabled would keep
+# a working credentialed channel open to any page a developer happens to have
+# open. A production deployment must name its real frontend.
+if not settings.is_production:
+    for fallback_origin in (
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ):
+        if fallback_origin not in origins:
+            origins.append(fallback_origin)
 
 # Middlewares
 app.add_middleware(

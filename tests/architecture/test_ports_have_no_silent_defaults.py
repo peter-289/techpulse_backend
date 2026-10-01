@@ -55,6 +55,11 @@ RAISING_MEMBERS: dict[str, str] = {
         "it answers an authorization question, and an unimplemented one must not "
         "default to 'this user bought nothing' -- see the module docstring"
     ),
+    "ISoftwareRepository.list_all": (
+        "an unimplemented one returns None, which iterates as zero packages, so the "
+        "admin moderation views would show an empty platform and read as 'nothing to "
+        "moderate' rather than as the missing implementation it is"
+    ),
 }
 
 #: Ports the sweep must keep finding, so an empty or shrunken result fails.

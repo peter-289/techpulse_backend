@@ -229,6 +229,12 @@ async def list_version_artifacts(
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> list[ArtifactResponse]:
+    """List the artifacts attached to one version.
+
+    The authorization check lives inline here rather than in the service because
+    listing is not downloading: it exposes filenames, sizes and hashes, so it
+    carries the same private/paid gate without touching the download rules.
+    """
     try:
         software = await service.get(software_id)
         target_version = software.get_version_by_semver(SemVer.parse(version))
@@ -319,6 +325,11 @@ async def search(
     """Search packages with optional category slug and comma-separated tags.
 
     Returns items (software read dicts), scores, total, limit, offset.
+
+    Unauthenticated by design: it is the public catalogue. The repository
+    restricts candidates to PUBLIC and not-deleted rows, so nothing private is
+    reachable through it. ``total`` is the number of ranked candidates and is
+    capped by ``SearchService.CANDIDATE_LIMIT`` -- it is not a table count.
     """
     # parse tags
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
@@ -353,11 +364,21 @@ async def search(
 async def admin_packages(
     limit: int = Query(100, ge=1, le=200),
     service: SoftwareService = Depends(get_software_service),
-    admin:CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
+    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> list[SoftwareRead]:
-    user_id = admin.user_id
-    items, _ = await service.list_visible(user_id=user_id, limit=limit)
-    return [software_item(item, viewer_user_id=user_id).model_copy(update={"viewer_has_access": True}) for item in items]
+    """List every package on the platform.
+
+    Goes through ``list_all`` rather than ``list_visible``. Both admin routes
+    previously called ``list_visible(user_id=admin.user_id)``, which asks "what does
+    this admin own" -- so the moderation view returned only the admin's own uploads,
+    and ``admin_summary`` then read ``.versions`` off the flat card that
+    ``list_visible`` returns and raised ``AttributeError``.
+    """
+    items = await service.list_all(limit=limit)
+    return [
+        software_item(item, viewer_user_id=admin.user_id).model_copy(update={"viewer_has_access": True})
+        for item in items
+    ]
 
 
 @router.get("/admin/summary", response_model=SoftwareSummary)
@@ -365,7 +386,12 @@ async def admin_summary(
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
 ) -> SoftwareSummary:
-    items, _ = await service.list_visible(user_id=current_user.user_id, limit=200)
+    """Platform-wide counts for the admin dashboard.
+
+    Reads aggregates rather than cards: ``versions`` and ``download_count`` live on
+    the entity graph, not on the flat projection ``list_visible`` hands back.
+    """
+    items = await service.list_all(limit=200)
     versions = [version for software in items for version in software.versions]
     return SoftwareSummary(
         total_packages=len(items),

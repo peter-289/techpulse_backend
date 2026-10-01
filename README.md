@@ -94,20 +94,26 @@ Copy the example environment file and edit it for your setup:
 Copy-Item .env.example .env
 ```
 
-Important settings include:
+There is one `.env`, at the repository root, grouped by which container
+consumes each variable. Important settings include:
 
-- `DATABASE_URL` and `ALEMBIC_DATABASE_URL`
+- `DATABASE_URL_ASYNC` (the application engine) and `DATABASE_URL_SYNC` (Alembic)
 - `SECRET_KEY`
 - `EMAIL_VERIFY_SECRET` and `PASSWORD_RESET_SECRET`
 - `FRONTEND_URL` and `BACKEND_URL`
+- `ENVIRONMENT` — `production` turns off `/docs` and the loopback CORS origins
+- `TRUST_PROXY_HEADERS` — see [ADR 0015](./docs/adr/0015-proxy-header-trust-is-decided-in-one-place.md)
 - `ACCESS_COOKIE_NAME` and `REFRESH_COOKIE_NAME`
 - `SMTP_*` values if email delivery is enabled
 - `REDIS_HOST`, `REDIS_PASSWORD`, and `REDIS_DB`
-- `STARTUP_RUN_MIGRATIONS`
-- `SUPERUSER_*` values for startup admin seeding
+- `SUPERUSER_*` values for admin seeding
 - `PAYMENT_*` and `MALWARE_SCAN_*` values if those integrations are used
 
-See [`.env.example`](./.env.example) for the full list of supported variables.
+There is deliberately no `STARTUP_RUN_MIGRATIONS`: schema changes run as their
+own one-shot step, not from the application's start-up.
+
+See [`.env.example`](./.env.example) for the full list, and
+[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for deployment.
 
 ## Local Development
 
@@ -134,6 +140,42 @@ Health and docs:
 - `GET /health`
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+
+`/docs`, `/redoc` and `/openapi.json` are served only when
+`ENVIRONMENT != production`, unless `SERVE_API_DOCS` overrides it.
+
+## Running the stack with Docker
+
+```bash
+cp .env.example .env    # then edit it
+docker compose up -d --build
+```
+
+Services come up in order — `db` becomes healthy, `migrate` applies the schema
+once and exits, and `api` waits for that to succeed before serving:
+
+```bash
+docker compose ps -a                                  # check migrate exited 0
+docker compose logs migrate                           # read its output
+docker compose up -d api                              # only if you changed app code
+docker compose --profile dev up -d                    # adds mailhog + pgadmin
+```
+
+Mailhog and pgAdmin are local-development conveniences behind the `dev`
+profile; `docker compose up` does not start them. Production mail will point
+`SMTP_*` at a third-party provider.
+
+Schema changes are **not** part of the application's start-up. `migrate` is a
+separate one-shot service, so restarting or rolling out `api` cannot apply a
+migration as a side effect, and a failed migration stops the deploy before any
+web process starts. Apply them deliberately:
+
+```bash
+docker compose run --rm migrate
+```
+
+One migration is irreversible and will refuse to run without acknowledgement —
+see [TECHPULSE_ALLOW_DESTRUCTIVE_MIGRATIONS](./docs/DEPLOYMENT.md).
 
 ## Tests
 

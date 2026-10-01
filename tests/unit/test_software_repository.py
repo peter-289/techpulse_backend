@@ -112,6 +112,10 @@ def test_the_concrete_repository_overrides_the_port() -> None:
         "SQLAlchemySoftwareRepository must state its own has_purchase answer. "
         "Without it the port's body is used, which is the defect this file records."
     )
+    assert "list_all" in SQLAlchemySoftwareRepository.__dict__, (
+        "SQLAlchemySoftwareRepository must implement list_all. The port raises for it "
+        "like it does for has_purchase, and the admin moderation views depend on it."
+    )
 
 
 def test_a_paid_software_is_reachable_only_by_its_owner() -> None:

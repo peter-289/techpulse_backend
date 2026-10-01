@@ -1,46 +1,62 @@
-# Enviroment variables
+# Environment variables. A catch-all rather than a list of names: the earlier
+# version enumerated .env.local, .env.production and .env.testing, so any new
+# variant (.env.staging, .env.ci, .env.dev) was committable by omission.
+# .env.example is the only env file that belongs in version control.
 .env
-.env.local
-.env.*.local
-.env.production
-.env.testing
+.env.*
+!.env.example
+.envrc
 
-# Logs
-logs
-*.log
-# `logs` above is unanchored, so it matches any directory with that name at any
-# depth -- including the source package added in Phase 8 at
-# app/modules/security/infrastructure/logs/, which the commit would then have
-# left out while every import of it stayed in. Anchoring the ignore to the
-# repository root is what the rule meant: one runtime log directory.
-# Re-include the package, and the re-inclusion needs the parent directory
-# un-ignored too, because git does not descend into an excluded directory.
+# Logs. Anchored to the repository root: one runtime log directory, created on
+# demand by app/core/logging_setup.py. An unanchored `logs` also matches
+# app/modules/security/infrastructure/logs/, which is a source package -- that
+# silently dropped it from the repo while every import of it stayed in.
 /logs/
-!app/modules/security/infrastructure/logs/
+*.log
 
 # Cache
-.cache
-.pycache
-__pycache__
+__pycache__/
 *.py[cod]
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtualenvs. Listed explicitly instead of relying on the self-ignoring
+# .gitignore that uv writes inside .venv/, so the exclusion is a property of
+# this repository rather than of whichever tool happened to create the venv.
+.venv/
+venv/
+env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+__pypackages__/
 
 # Database
 *.sqlite3
-db.sqlite3
-.db
+*.db
+
+# Certificates and private keys
+*.pem
+*.key
+*.crt
 
 # User-uploaded artifacts. These are end-user content served back over
 # GET /api/v1/software-management/storage/download/{storage_key}, not source.
 # Tracking them puts arbitrary uploaded files (including .py) into version
-# control.
-#
-# Anchored to the repository root. An unanchored ``storage/`` matches a
-# directory of that name at *any* depth, which silently swallowed
-# ``app/infrastructure/storage/`` -- so ``local_artifact_stager.py`` was never
-# committed and a fresh clone could not import the application.
-# ``app/infrastructure/storage/`` -- a source directory, not this one.
+# control. Anchored to the repository root, because an unanchored `storage/`
+# matches a directory of that name at any depth and silently swallowed the
+# source package app/infrastructure/storage/.
 /storage/
 
-# Codebase 
+# Editors and OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db

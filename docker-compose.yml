@@ -1,58 +1,186 @@
+# TechPulse backend stack.
+#
+# Every variable comes from the single `.env` file at the repository root --
+# see `.env.example` for the annotated list. Compose reads that file for
+# `${...}` interpolation; the `api` and `migrate` services additionally get it
+# injected wholesale through `env_file` so the application's own settings load.
+#
+# Service order is deliberate:
+#
+#   db (healthy) -> migrate (runs once, exits) -> api (waits for migrate)
+#
+# `migrate` is a one-shot step, not a long-running service. It is not part of
+# the application's start-up path, so a restart or a rolling deploy of `api`
+# can never apply a migration as a side effect. `api` blocks on
+# `service_completed_successfully`, so a failed migration stops the deploy
+# before any web process starts, and leaves the previous revision in place.
+#
+#   docker compose up -d --build            # everything needed in production
+#   docker compose --profile dev up -d      # additionally: mailhog + pgadmin
+
+name: techpulse
+
+# One build definition, shared by both services that use the image, so the
+# image is built once rather than once per service.
+x-backend-image: &backend-image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: techpulse-backend:latest
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
-    image: postgres:latest
+    image: postgres:16
     container_name: techpulse-db
-    
+    restart: unless-stopped
+    environment:
+      # Only what postgres itself needs. The application secrets stay out of
+      # this container even though they share the root .env file.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # The migrate and api services wait on this, so it has to mean "accepting
+      # connections", not merely "process started".
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------
+  # Schema changes. Outside the application lifecycle, on purpose.
+  # ---------------------------------------------------------------------
+  migrate:
+    <<: *backend-image
+    container_name: techpulse-migrate
+    # Overrides the image entrypoint, which starts the web server. This process
+    # applies migrations and exits; it never serves a request.
+    entrypoint: ["alembic", "upgrade", "head"]
     env_file:
       - .env
+    environment:
+      # Point the engines at the compose network rather than at localhost.
+      DATABASE_URL_ASYNC: ${DATABASE_URL_ASYNC:?DATABASE_URL_ASYNC is required}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC:?DATABASE_URL_SYNC is required}
+      # Revision 8dea867ad60e drops three tables permanently and refuses to
+      # run without this acknowledgement. Defaults to off: a deploy must opt in
+      # rather than lose data by omission. Set to 1 once a backup exists.
+      TECHPULSE_ALLOW_DESTRUCTIVE_MIGRATIONS: ${TECHPULSE_ALLOW_DESTRUCTIVE_MIGRATIONS:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
 
+  api:
+    <<: *backend-image
+    container_name: techpulse-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL_ASYNC: ${DATABASE_URL_ASYNC:?DATABASE_URL_ASYNC is required}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC:?DATABASE_URL_SYNC is required}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Named volumes are seeded from the image, which creates these two
+      # directories owned by appuser. Without that the volume is root-owned and
+      # the process cannot create its log file at import time.
+      UPLOAD_ROOT: /app/storage
+      LOG_DIR: /app/logs
     ports:
-      - "5432:5432"
-
+      - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
-      - postgres_data:/var/lib/postgresql
+      # User-uploaded artifacts and log files. Without these they live in the
+      # container layer and are lost when it is replaced.
+      - api_storage:/app/storage
+      - api_logs:/app/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # Let the background loops in the lifespan drain on shutdown rather than
+    # being cut off at the default 10s.
+    stop_grace_period: 30s
+    logging: *default-logging
 
-  pgadmin:
-     image: elestio/pgadmin
-     container_name: pgadmin
-     restart: always
-     environment:
-       PGADMIN_DEFAULT_EMAIL: admin@gmail.com
-       PGADMIN_DEFAULT_PASSWORD: MwakiPeter@289
-     ports:
-       - "5050:80"
-     depends_on:
-       - db
-     volumes:
-       - pgadmin_data:/var/lib/pgadmin
-  
   redis:
-     image: redis
-     container_name: techpulse-redis
-     command: >
-       redis-server
-       --requirepass ${REDIS_PASSWORD}
+    image: redis:7-alpine
+    container_name: techpulse-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # `$$` escapes the interpolation so the shell inside the container reads
+      # the variable, not compose.
+      test:
+        - CMD-SHELL
+        - redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
 
-     env_file:
-       - .env
-
-     ports:
-       - "6379:6379"
-      
-     volumes:
-        - redis_data:/data
+  # ---------------------------------------------------------------------
+  # Local development only. Behind the `dev` profile, so `docker compose up`
+  # does not start them. Mail will move to a third-party provider; this is a
+  # local sink so verification and password-reset emails are inspectable.
+  # ---------------------------------------------------------------------
   mailhog:
-     image: mailhog/mailhog:latest
-     container_name: mailhog
-     restart: unless-stopped
-     ports:
-       - "1025:1025"
-       - "8025:8025"
-      
+    image: mailhog/mailhog:latest
+    container_name: techpulse-mailhog
+    restart: unless-stopped
+    profiles: ["dev"]
+    ports:
+      - "${MAILHOG_SMTP_HOST_PORT:-1025}:1025"
+      - "${MAILHOG_UI_HOST_PORT:-8025}:8025"
+    logging: *default-logging
+
+  # Local development only, behind the `dev` profile. The password is read
+  # from the root .env and is never committed; a value committed here before
+  # was leaked into git history at 241f483.
+  pgadmin:
+    image: elestio/pgadmin
+    container_name: techpulse-pgadmin
+    restart: unless-stopped
+    profiles: ["dev"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-}
+    ports:
+      - "${PGADMIN_HOST_PORT:-5050}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    logging: *default-logging
+
 volumes:
- postgres_data:
- pgadmin_data:
- redis_data:
-
-
-
+  postgres_data:
+  redis_data:
+  api_storage:
+  api_logs:
+  pgadmin_data:

@@ -35,6 +35,8 @@ suite rather than by convention: a port may not silently default
 | 0012 | [The admin API belongs to the security context, and log reading is a port](0012-admin-api-in-security-and-log-tail-port.md) | Accepted |
 | 0013 | [A port member may not silently default](0013-port-members-may-not-silently-default.md) | Accepted |
 | 0014 | [The reference architecture document is a checked artefact](0014-the-architecture-document-is-a-checked-artefact.md) | Accepted |
+| 0015 | [Proxy-header trust is decided in one place](0015-proxy-header-trust-is-decided-in-one-place.md) | Accepted |
+| 0016 | [Schema changes run outside the application lifecycle](0016-schema-changes-run-outside-the-application-lifecycle.md) | Accepted |
 
 ## Template
 

@@ -38,8 +38,38 @@ class ISoftwareRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
     ) -> list[SoftwareCard]:
-        """List software cards for marketplace. Returns (items, total)."""
+        """List software cards for marketplace. Returns (items, total).
+
+        Currently unreachable: no service or route calls it. The public catalogue
+        is served by ``search_candidates`` instead, which returns aggregates and
+        lets ``SearchAlgorithm`` rank them. Kept because it is a working, tested
+        query and the catalogue endpoint is the obvious next thing to build on it
+        -- but a caller expecting "the marketplace" should know it wants this
+        rather than ``list_all``, which includes non-public rows.
+        """
         ...
+
+    async def list_all(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Software]:
+        """List every package as a full aggregate, with its versions loaded.
+
+        Distinct from ``list_marketplace``, which returns the flat card projection
+        and is filtered to public rows. The admin moderation views need aggregates:
+        they read version status and download counts, and neither is on a card.
+
+        Raises rather than defaulting, for the same reason ``has_purchase`` does.
+        A ``...`` body returns ``None``, which iterates as zero packages -- so an
+        implementation that forgets this override shows an administrator an empty
+        platform and reads as "nothing to moderate" instead of as a bug.
+        """
+        raise NotImplementedError(
+            "list_all must be implemented by the adapter: returning the port's body "
+            "makes the admin moderation views report an empty platform."
+        )
 
     async def list_owned(
         self,

@@ -53,6 +53,14 @@ class SoftwareService:
 
     @property
     def repository(self):
+        """The repository the search path uses.
+
+        A test seam, and a narrow one. Every method on this service reads
+        ``self._uow.software_repo`` directly, so assigning this property does *not*
+        redirect them -- it only affects callers that go through the property, which
+        today means the ``/search`` route. It is left as-is because removing it would
+        mean rewiring the router to reach into ``_uow``, which is worse.
+        """
         override = getattr(self, "_repository_override", None)
         if override is not None:
             return override
@@ -70,6 +78,13 @@ class SoftwareService:
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[OwnedSoftwareCard], int]:
+        """List software visible to the caller.
+
+        The ``is_admin`` switch is deliberately ignored here. Every caller of this
+        method wants "my software" -- including the two admin routes, which used to
+        rely on it for "everything" and therefore returned only the admin's own
+        rows. Use :meth:`list_all` for the moderation view.
+        """
         async with self._uow.read_only():
             return await self._uow.software_repo.list_owned(
                 owner_id=user_id,
@@ -77,8 +92,22 @@ class SoftwareService:
                 offset=offset,
             )
 
+    async def list_all(self, *, limit: int = 100, offset: int = 0) -> list[Software]:
+        """List every package on the platform, as aggregates.
+
+        Returns full ``Software`` entities rather than the flat card projection,
+        because the moderation views need the versions and download counts that
+        only the aggregate carries.
+        """
+        async with self._uow.read_only():
+            return await self._uow.software_repo.list_all(limit=limit, offset=offset)
+
     async def get(self, software_id: UUID) -> Software:
-        """Retrieve a software using its id"""
+        """Load a software aggregate by id.
+
+        Raises:
+            SoftwareNotFoundError: If no software has that id.
+        """
         async with self._uow.read_only():
             software = await self._uow.software_repo.get(software_id)
         if software is None:
@@ -109,9 +138,22 @@ class SoftwareService:
         version_number: str,
         visibility: SoftwareVisibility,
         price_cents: int = 0,
-        currency: str = "KSH",
+        currency: str = "KES",
         artifacts: Sequence[ArtifactUpload],
     ) -> tuple[Software, Version]:
+        """Create a software package together with its first version.
+
+        The version is published immediately when every artifact comes back from
+        storage in the ACTIVE state, so a first upload does not need a separate
+        publish call.
+
+        Returns:
+            The new aggregate and the version created alongside it.
+
+        Raises:
+            SoftwareDomainError: If no artifacts were supplied or storage is unset.
+            InvalidCurrencyError: If ``currency`` is not a supported ISO 4217 code.
+        """
         uploads = tuple(artifacts)
         if not uploads:
             raise SoftwareDomainError("At least one artifact is required.")
@@ -232,6 +274,7 @@ class SoftwareService:
         software.update_pricing(price_cents=price_cents, currency=currency)
         async with self._uow:
             await self._uow.software_repo.save(software)
+        await self._dispatch_events(software)
         return software
 
     async def require_owner(
@@ -256,25 +299,44 @@ class SoftwareService:
         version_number: str,
         user_id: UUID,
     ) -> SignedDownloadUrl:
+        """Authorize a whole-version download, then sign it.
+
+        The access rules are enforced here *and* again in
+        :meth:`DownloadService.create_download_url`. That is deliberate: this
+        service is the first gate and must refuse before touching the download
+        service at all, and the download service owns the invariant because it is
+        also reachable directly from the ``download_version`` route. Two callers,
+        two enforcement points, one documented rule.
+        """
         software = await self.get(software_id)
         try:
-            semver = SemVer.parse(version_number)
+            SemVer.parse(version_number)
         except InvalidSemVerError as exc:
             raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
 
-        version = software.get_version_by_semver(semver=semver)
-        if len(version.artifacts) != 1:
-            raise SoftwareDomainError("Version download requires a single artifact. Use the artifact download endpoint.")
-        has_purchase = await self.has_purchase(software_id=software.id, user_id=user_id)
-        if software.requires_payment() and not software.is_owned_by(user_id) and not has_purchase:
-            raise DownloadDeniedError("A purchase is required to download this software.")
-        if not software.is_public() and not software.is_owned_by(user_id) and not has_purchase:
-            raise DownloadDeniedError("A purchase is required to download this software.")
-        return self._download_service.create_download_url(
+        await self._assert_download_allowed(software=software, user_id=user_id)
+
+        return await self._download_service.create_download_url(
             software_id=software.id,
-            version_number=version.number,
+            version_number=version_number,
             user_id=user_id,
         )
+
+    async def _assert_download_allowed(self, *, software: Software, user_id: UUID) -> None:
+        """Refuse unless the caller may download ``software``.
+
+        A purchase satisfies the requirement for paid software; ownership satisfies
+        it for anything private. Neither implies access on its own, so both checks
+        are needed -- and a free-but-private package needs ownership, which the
+        purchase branch alone would have let through.
+        """
+        has_purchase = await self.has_purchase(software_id=software.id, user_id=user_id)
+        if software.is_owned_by(user_id):
+            return
+        if software.requires_payment() and not has_purchase:
+            raise DownloadDeniedError("A purchase is required to download this software.")
+        if not software.is_public() and not has_purchase:
+            raise SoftwareAccessDeniedError("This software is not public.")
 
     async def download_artifact_url(
         self,
@@ -284,22 +346,29 @@ class SoftwareService:
         artifact_id: UUID,
         user_id: UUID,
     ) -> SignedDownloadUrl:
+        """Authorize a single-artifact download and sign it.
+
+        Access is refused here before the download service is reached, and the
+        downloadable-state rule is additionally enforced by
+        :meth:`DownloadService.create_artifact_download_url`. This method's own
+        copy of the rules previously omitted ``is_downloadable``, so a revoked
+        release stayed downloadable through this route while the version endpoint
+        honoured the revocation.
+        """
         software = await self.get(software_id)
         try:
-            semver = SemVer.parse(version_number)
+            SemVer.parse(version_number)
         except InvalidSemVerError as exc:
             raise SoftwareDomainError(f"Invalid version format: {version_number}") from exc
 
-        version = software.get_version_by_semver(semver=semver)
-        artifact = next((item for item in version.artifacts if item.id == artifact_id), None)
-        if artifact is None:
-            raise SoftwareNotFoundError("Artifact not found.")
-        has_purchase = await self.has_purchase(software_id=software.id, user_id=user_id)
-        if software.requires_payment() and not software.is_owned_by(user_id) and not has_purchase:
-            raise DownloadDeniedError("A purchase is required to download this software.")
-        if not software.is_public() and not software.is_owned_by(user_id) and not has_purchase:
-            raise DownloadDeniedError("A purchase is required to download this software.")
-        return self._download_service.create_artifact_download_url(artifact=artifact)
+        await self._assert_download_allowed(software=software, user_id=user_id)
+
+        return await self._download_service.create_artifact_download_url(
+            software_id=software.id,
+            version_number=version_number,
+            artifact_id=artifact_id,
+            user_id=user_id,
+        )
 
     async def deprecate_version(
         self,
@@ -319,6 +388,7 @@ class SoftwareService:
         software.deprecate_version(version.id)
         async with self._uow:
             await self._uow.software_repo.save(software)
+        await self._dispatch_events(software)
         return version
 
     async def revoke_version(
@@ -339,6 +409,9 @@ class SoftwareService:
         software.revoke_version(version.id)
         async with self._uow:
             await self._uow.software_repo.save(software)
+        # Dispatched like every other mutator: a revocation is what you do when a
+        # release turns out to be unsafe, so subscribers have to hear about it.
+        await self._dispatch_events(software)
         return version
 
     async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:

@@ -86,7 +86,7 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
         except SQLAlchemyError as exc:
            logger.error("Error staging software for save: %s", exc, exc_info=False)
            raise RepositoryUnavailableError(
-            f"Failed to stage software aggregation."
+            "Failed to stage software aggregation."
            ) from exc
 
     
@@ -113,6 +113,9 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
                 SoftwareModel.created_at,
                 SoftwareVersionModel.version.label("latest_version"),
             )
+            # LEFT OUTER, not inner: a package whose first upload is still being
+            # processed has no version yet, and an inner join would drop it from the
+            # catalogue entirely instead of listing it without a version.
             .outerjoin(
                 SoftwareVersionModel,
                 SoftwareModel.latest_version_id == SoftwareVersionModel.id,
@@ -138,6 +141,10 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
                 description=row["description"],
                 price_cents=row["price_cents"],
                 currency=row["currency"],
+                # The joined ``latest_version`` column was selected but never read
+                # back, so the card reported no version even when one existed. A
+                # left join makes the null the real case rather than a filtered one.
+                latest_version=row["latest_version"],
                 created_at=row["created_at"],
             )
             for row in rows
@@ -148,6 +155,32 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
            raise RepositoryUnavailableError(
               "Failed to list marketplace software"
            ) from exc
+
+    async def list_all(self, *, limit: int = 100, offset: int = 0) -> list[Software]:
+        """List every package as an aggregate, ordered newest first.
+
+        Eager-loads versions and artifacts because the callers are the moderation
+        views, which read version status and per-version download counts. Without
+        the ``selectinload`` those would trigger lazy loads on a closed session.
+        """
+        try:
+            stmt = (
+                select(SoftwareModel)
+                .options(
+                    selectinload(SoftwareModel.versions)
+                    .selectinload(SoftwareVersionModel.artifacts)
+                )
+                .where(SoftwareModel.status != SoftwareStatus.DELETED)
+                .order_by(SoftwareModel.created_at.desc(), SoftwareModel.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            result = await self.session.execute(stmt)
+            return [software_to_entity(model) for model in result.scalars().all()]
+
+        except SQLAlchemyError as exc:
+            logger.exception("Failed to list all software")
+            raise RepositoryUnavailableError("Failed to list all software") from exc
 
     async def list_owned(self, owner_id: UUID, *, limit: int = 100, offset: int = 0) -> tuple[list[OwnedSoftwareCard], int]:
            try:

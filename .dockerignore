@@ -1,0 +1,81 @@
+# Build-context hygiene. The Dockerfile runs `COPY . .`, so every file not
+# excluded here is baked into an image layer. Those layers are immutable and
+# stay readable with `docker save` long after the file is deleted from the
+# working tree, which is why this file matters more than it looks.
+#
+# A note on matching, because it differs from .gitignore in a way that matters
+# here. Patterns are relative to the context root, not to the repository root
+# at any depth: a plain `logs` matches only ./logs, and reaching a nested one
+# needs `**/logs`. So the runtime-state and source-package collisions that
+# .gitignore has to be careful about (`logs` vs
+# app/modules/security/infrastructure/logs/, `storage/` vs
+# app/infrastructure/storage/) are not a hazard here. Leading and trailing
+# slashes are disregarded, so `logs`, `/logs/` and `logs/` are all the same.
+# `!` re-includes are supported, with the last matching line deciding.
+
+# Secrets. docker-compose.yml loads .env for the db and redis services, so
+# this file exists in every working checkout. Copying it would bake the DB
+# password, the JWT secrets and the SMTP credentials into the image.
+.env
+.env.*
+!.env.example
+
+# Virtualenvs. .venv is ~119MB and is built against the host interpreter; the
+# image installs its own dependencies from requirements.txt.
+.venv/
+venv/
+env/
+ENV/
+
+# Version control: ~5.6MB of history, including anything ever committed.
+.git/
+.gitignore
+.github/
+.dockerignore
+
+# Build inputs, not runtime artifacts. Excluding them does not stop the build:
+# the Dockerfile references them by name, which reads the context directly.
+Dockerfile
+docker-compose.yml
+
+# Bytecode compiled for the host interpreter. PYTHONDONTWRITEBYTECODE=1 stops
+# new caches being written, but not stale ones from being copied in. Cache
+# patterns are left at any depth on purpose -- a cache is never source.
+**/__pycache__/
+**/*.py[cod]
+**/*.so
+
+# Tool caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+__pypackages__/
+
+# Runtime state, created by the app as appuser at start-up. Shipping a copy
+# from the host is both wrong and a chown cost on a large tree.
+logs/
+storage/
+*.sqlite3
+*.db
+
+# Tests and design docs. ci.yml runs pytest from a checkout and never from
+# this image, and no module under app/ opens a doc file at run time (the
+# references in those files are all in comments and docstrings). The one
+# architecture document that a test does check lives under app/, so it stays.
+tests/
+docs/
+
+# Editors and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

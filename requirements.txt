@@ -13,13 +13,19 @@ pydantic-settings==2.12.0
 pydantic_core==2.23.4
 annotated-types==0.7.0
 email-validator==2.3.0
-PyJWT==2.11.0
-python-jose==3.3.0
+# 3.4.0, not 3.3.0: the 3.3.x line carries algorithm-confusion and JWT-bomb
+# advisories (CVE-2024-33663, CVE-2024-33664) fixed in 3.4.0. This is the only
+# library the whole auth model runs through -- token_manager.py imports it and
+# nothing else does -- so the pin is a security control, not a preference.
+python-jose==3.4.0
 argon2-cffi==23.1.0
 argon2-cffi-bindings==25.1.0
 cryptography==46.0.4
 ecdsa==0.19.1
-pyasn1==0.6.2
+# 0.4.8, not 0.6.2: python-jose requires pyasn1<0.5.0. The 0.6.2 pin came from
+# the python-jose 3.3.0 tree and is mutually exclusive with 3.4.0, so
+# `pip install -r requirements.txt` fails outright with both pins present.
+pyasn1==0.4.8
 rsa==4.9.1
 redis[asyncio]==5.0.0
 aioredis==2.0.1

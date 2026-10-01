@@ -4,7 +4,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, Asyn
 
 from app.core.config import settings
 if not settings.DATABASE_URL_ASYNC:
-    raise RuntimeError("DATABASE_URL is not set.")
+    raise RuntimeError(
+        "DATABASE_URL_ASYNC is not set. The application engine reads that name "
+        "(see .env.example); Alembic reads DATABASE_URL_SYNC."
+    )
 
 engine_kwargs = {"pool_pre_ping": True}
 if settings.DATABASE_URL_ASYNC and settings.DATABASE_URL_ASYNC.startswith("sqlite"):
