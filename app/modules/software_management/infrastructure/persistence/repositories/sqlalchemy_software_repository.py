@@ -30,6 +30,25 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
         self.session = session
 
 
+    async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
+        """Always False, stated here rather than inherited from the port.
+
+        There is no purchase table. The billing module that owned it was removed,
+        and this repository never implemented the query, so the method was being
+        answered by the port's ``...`` body — which returns ``None``, which is
+        falsy, which was indistinguishable from "this user bought nothing".
+
+        The answer happens to be correct today, because a purchase cannot be
+        recorded, so nobody can be a buyer. It is written out rather than left to
+        inheritance so that it is a decision at the adapter that owns the
+        knowledge, and so that restoring a purchase model is a change to one
+        method instead of a change to an authorization outcome nobody can
+        currently observe. The port raises rather than defaulting, so an
+        implementation that forgets this override is now loud.
+        """
+        return False
+
+
     # ─── Single item operations ───
     async def get(self, software_id: UUID) -> Software | None:
         """Get software by ID with all relationships loaded."""

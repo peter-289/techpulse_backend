@@ -27,10 +27,11 @@ shape, that is called out explicitly as a breaking change and justified.
 | 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 456 pass, 2 pre-existing fail | 0001, 0002, 0010 | merged |
 | 7b | split `shared/dependencies.py`; revalidation off the ORM | 471 pass, 2 pre-existing fail | 0001, 0011 | merged |
 | 8 | `admin_router` into `security`; `LogTail` port; ratchet drained | 567 pass, 2 pre-existing fail | 0001, 0002, 0012 | merged |
-| 9 | Drain ratchet, re-enable tests, correct `ARCHITECTURE.md` | — | — | pending |
+| 9a | Correct `ARCHITECTURE.md`; ports may not silently default | 636 pass | 0001, 0004, 0013, 0014 | merged |
 
-The 2 failures are pre-existing on `main` and unrelated to the refactor; see
-Phase 0.
+The 2 failures recorded against phases 0–8 were pre-existing on `main` and
+unrelated to the refactor (Phase 0). Both were `search_algorithm` tests that had
+been failing since the baseline and are fixed in Phase 9a.
 
 ---
 
@@ -1528,15 +1529,22 @@ instruction *do not add an entry here* is only worth something if there is an
 obvious place to add one instead.
 
 ```
-[ok] R1  domain imports no framework, ORM or driver
-[ok] R2  no context imports another's domain
-[ok] R3  no domain-to-infrastructure
-[ok] R4  no application-to-infrastructure
-[ok] R5  no ORM model in an application service
-[ok] R6  no SQLAlchemy statement in a router
-[ok] R7  no api-to-api
-[ok] R8  no framework, ORM or filesystem in a service
+[ok]        R1: domain must not import fastapi/starlette/sqlalchemy/pydantic/redis/jose/httpx
+[ok]        R2: a module must not import another module's domain layer (use app.modules.shared)
+[ok]        R3: domain must not import infrastructure (ports belong in domain, implementations in infrastructure)
+[ok]        R4: application must not import api/schema/infrastructure
+[ok]        R5: an application service must not import an ORM model (it has no domain object)
+[ok]        R6: an API router must not build SQLAlchemy statements
+[ok]        R7: a module's API layer must not import another module's API layer
+[ok]        R8: an application service must not import the web framework, the ORM, or the filesystem
 ```
+
+The rule descriptions above were paraphrased rather than copied when this was
+first written, and `ARCHITECTURE.md` carried the same invented transcript. Both
+were replaced with real output in Phase 9a. It is recorded here rather than quietly
+fixed because it is the clearest example of the class of thing Phase 9a is about: a
+plausible transcript, in a block that invites trust precisely because it looks like
+a command and its output.
 
 `test_request_path_has_no_orm_models.py` gained two guards, both green rather
 than ratcheted: a parametrised one over **both** paths the admin router has
@@ -1622,3 +1630,288 @@ hops to a worker thread because a large log on a slow disk would otherwise block
 the event loop. `test_the_read_happens_off_the_event_loop_thread` asserts the hop
 happens; it cannot assert that the hop was worth it, which is a judgement about
 file sizes this project has not hit yet.
+
+---
+
+## Phase 9a — a port that answered without being asked, and a document that answered without looking
+
+### What the file was
+
+`ARCHITECTURE.md` is what a reviewer reads to decide whether a change to
+`software_management` is placed correctly. Phase 1 found four divergences and
+deferred the correction, on the condition that it happen "against something real in
+Phase 9a".
+
+It had drifted in roughly forty places across nineteen sections since. Not
+cosmetic drift: a directory tree that stopped existing in Phase 1; port names that
+collided with the concrete classes they described; a `Storage` port with a method it
+has never had; two event classes that have never existed; a section describing the
+search implementation as future work; and a quality gate requiring `mypy --strict`
+in a project where mypy is not installed and is not in `requirements.txt`.
+
+Two fabrications are worth naming individually, because both are the kind that
+survive review:
+
+```
+$ python -m tests.architecture.layer_rules
+[ok] R1  domain imports no framework, ORM or driver
+```
+
+That transcript appeared in this file after Phase 8 and in `ARCHITECTURE.md` §3.1.
+It was written from memory. The real output is the eight lines now in both places,
+and they are wordier than the invented ones because the rule docstrings are.
+
+The second was a count: `domain/exceptions.py` was documented as holding 28
+classes. It holds 25. Nothing else in the document is more load-bearing than a
+count — the argument that `has_purchase` was safe to leave unimplemented is that
+the surrounding code was small and well understood, and the count was part of that
+picture.
+
+### The defect: a port member with no implementation is a default value
+
+`SQLAlchemySoftwareRepository` names its port as a base class:
+
+```python
+class SQLAlchemySoftwareRepository(ISoftwareRepository):
+```
+
+A `Protocol` subclass that is not itself a protocol is an ordinary class, so it
+**inherits the port's method bodies**. `ISoftwareRepository.has_purchase` was
+written as `...`, so it was not an unimplemented interface — it was an
+implementation, supplied to every class that forgot to write one, returning
+`None`.
+
+Three files asked it about authorization (`SoftwareService.download_url`,
+`download_artifact_url`, `DownloadService.create_download_url`), plus the router at
+`software_router.py:238`. `None` is falsy, so every one of them reported "this user
+bought nothing" — with nothing anywhere to say the question had gone unasked.
+
+**The answer was right.** The purchase table was removed with the `billing` module,
+so no purchase can be recorded and no user can be a buyer. That is what makes this
+the interesting case rather than an ordinary missing implementation: a wrong answer
+that nothing can distinguish from a right one, surviving until the day it stops
+being true.
+
+Three things had grown around it, all of which read as care:
+
+- `DownloadService` guarded the call with `hasattr(repo, "has_purchase")`. The
+  attribute was always inherited, so the guard was never once `False`.
+- A codebase-wide sweep for exactly this defect, written with
+  `pkgutil.walk_packages(app.__path__)`, reported the tree clean. `domain/` and
+  `infrastructure/` have no `__init__.py`, so the walk descended past both and saw
+  half this context. Every other architecture test in this repo walks the
+  filesystem for the same reason.
+
+### What changed
+
+The port raises, the adapter states the truth, and the guard is on the shape rather
+than on the answer (ADR 0013):
+
+```python
+# domain/ports/repositories/software_repository.py
+async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
+    """...raises NotImplementedError, with the reason in the docstring..."""
+
+# infrastructure/persistence/repositories/sqlalchemy_software_repository.py
+async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
+    return False   # no purchase table: the billing module removed it
+```
+
+`DownloadService.create_download_url` calls the port directly. The dead `hasattr`
+guard is gone.
+
+The choice worth reviewing is returning `False` rather than raising from the
+adapter. Raising would make every request for a paid, non-public artifact a 500 —
+a contract change inside a phase whose invariant is that the HTTP API does not
+change, and a worse answer than the one already available. The 403 for unauthorized
+users is preserved exactly, and the port still refuses to default, so the next
+implementation that forgets is loud. If a reviewer disagrees and wants the loudness
+at the call site instead, that is a one-line change to the adapter plus a
+documented status-code change.
+
+`tests/architecture/test_ports_have_no_silent_defaults.py` sweeps every explicit
+protocol subclass in `app/` and fails on an inherited ellipsis body, with a
+`RAISING_MEMBERS` table for members that are allowed to raise and a required reason
+for each. It found exactly one instance across the codebase.
+
+`tests/unit/test_software_repository.py` pins the behaviour: the port's body is not
+an ellipsis, the concrete repository returns `False` rather than `None`, and a
+purchase check is reachable only by an owner.
+
+### The two failing tests, and what they were actually about
+
+`tests/unit/test_search_algorithm.py` had two failures on `main` since Phase 0, kept
+as pre-existing through eight phases. They were not stale tests. They were correct
+and the code was wrong.
+
+`SearchAlgorithm.rank` derived the score and `matched_fields` from **two**
+derivations of the same facts: `_calculate_relevance_score` summed four signals,
+and `_identify_matched_fields` re-derived which of them applied. They disagreed.
+The query signals were recorded and the popularity and recency signals were not,
+so a result could be ranked by a signal it did not claim — which is precisely what
+a reader of `matched_fields` is asking it to answer.
+
+Both are now one pass. `_score_contributions` returns `{signal: contribution}`,
+the score is its sum, and `matched_fields` is its keys — with a zero weight
+contributing nothing and therefore not claiming credit:
+
+```python
+contributions = self._score_contributions(software, query_tokens, query_normalized, now)
+scored.append(ScoredSoftware(
+    software=software,
+    score=float(sum(contributions.values())),
+    matched_fields=[name for name, value in contributions.items() if value > 0.0],
+))
+```
+
+The exact-match bonus is preserved as its own signal, `name_exact`, rather than
+folded into `name`: a query token appearing in the name is weak evidence and the
+query *being* the name is strong, and that distinction predates the phase.
+
+The score arithmetic is unchanged. Checked against the `HEAD` version of the file over
+11 queries × 4 candidates — including the empty query, a no-match query and two
+mixed-case ones — with ranking order compared as well as scores:
+
+- ranking order identical on every query;
+- largest score disagreement `3.0e-12`, which is summation order;
+- `matched_fields` differs on all 44 comparisons, and the old set is a strict
+  subset of the new one every time. That is the fix, not a regression: the old
+  list claimed only what `_identify_matched_fields` could see.
+
+To reproduce: `git show HEAD:...search_algorithm.py` into a file, import both
+classes, and call `rank` with the same candidate list.
+
+### The document guard
+
+`tests/architecture/test_architecture_doc_matches_code.py` (ADR 0014) compares the
+section 2 tree with the filesystem in both directions, resolves every
+`app/`/`tests/`/`docs/` path named in backticks, asserts each name marked *(not
+implemented)* is still absent, and recomputes the counts the document quotes. It
+found two fabrications while it was being written — the exception count and a
+`Clock` port described as two-method when it declares one — and it is the reason
+§3.6 no longer claims `category_schema.py` validates `slug`, a field that schema has
+never had.
+
+It does not check arguments. A document that stops arguing is a worse document,
+and no gate should be the reason to delete an argument.
+
+### Findings recorded and not fixed
+
+Each of these is in `ARCHITECTURE.md` at the section named, with the evidence.
+
+**`api/errors.py` shadows the global handler registry** (§12.3). Every
+`software_router` handler wraps its body in `except SoftwareDomainError: raise
+http_error(exc)`, and `http_error` maps everything unrecognised to 400. So
+`InvalidStateTransitionError` answers 400 where `handlers.py` declares 409, and
+`RepositoryUnavailableError` answers 400 where it declares 503. Fixing it changes
+status codes, so it needs a phase whose invariant permits that.
+
+**Five routers still construct a concrete `UnitOfWork`** (§3.2) — `auth_router`,
+`user_router`, `resources_router`, `category_router`, `support_chat_router` —
+duplicating `dependencies.py:78` and `shared/dependencies.py:53`. Carried from
+Phase 8 unchanged; a rule banning it needs five ratchet entries, and growing a
+file whose stated contract is that it can only shrink is the wrong trade in a phase
+whose point is that the checks are real.
+
+**`SoftwareService` exposes a `repository` property with a setter**
+(`software_service.py:61`) that installs a test override, and `software_router.py:336`
+uses it to build a `SearchService` from the service's own repository. A router
+reaching into a service's dependency is the thing ADR 0011 moved composition roots
+to prevent.
+
+**`SearchService.search` catches bare `Exception`** (§10.4) and re-raises
+`RepositoryUnavailableError`, so it translates a driver error the repository
+already translated and swallows every other — a `SoftwareNotFoundError` would reach
+the client as "Search repository unavailable". `DownloadService.record_download`
+carries a comment explaining why it does not do the same.
+
+**Four reachable write paths record events nobody dispatches** (§11.2).
+`update_pricing`, `deprecate_version`, `revoke_version` and `record_download` each
+record domain events; only the upload path calls `pull_events` and hands them to
+the publisher. `SoftwareDownloadedEvent` — the one analytics would want — is among
+them. Six more event classes have no producer at all.
+
+**`Clock` has no caller** (§3.3). A one-method port and `SystemClock` implement
+it; no service takes a clock, and every timestamp in this context comes from
+`datetime.now()` at the point of use.
+
+**`SoftwareAccessPolicy` is defined twice** (§14) — byte-identical apart from a
+trailing newline, at `domain/policies/` and `policies/`. The only importer of the
+second is `tests/unit/test_software_access_policy.py`, which `tests/conftest.py`
+lists in `collect_ignore`, so it has no test and no caller. Adopting it is a
+behaviour change: `ensure_can_download` requires `PUBLISHED` where the live path
+accepts `DEPRECATED`, and requires `is_public()` even for a buyer.
+
+**`Category`'s invariants have no test at all** (§18), nor does
+`Artifact.verify_integrity`, and every download path is tested only against
+hand-written fakes.
+
+### Contract
+
+Preserved exactly.
+
+- Route table unchanged — `test_public_http_surface.py` green.
+- `GET /api/v1/software-management/search` returns `items`, `scores`, `total`,
+  `limit`, `offset`, in that order, and still no `matched_fields`. Scores are
+  arithmetically identical to Phase 8; `matched_fields` is internal and was wrong.
+- Paid, non-public software still answers 403 to a non-owner, with or without a
+  purchase record, because there is no purchase record.
+- `has_purchase` returns `False`, which is what the inherited body effectively
+  produced through `None`.
+- All 636 tests pass; the 2 pre-existing failures are fixed, none introduced.
+
+### Not changed, on purpose
+
+- **The exact-match bonus is case-sensitive.** `_calculate_name_contributions`
+  compares `software.name.lower()` against `query_normalized`, which is stripped
+  but never lowercased, so `?q=MyPackage` scores lower than `?q=mypackage` for the
+  same product and the bonus has never fired for a query containing a capital
+  letter. Fixing it changes `score`, which is returned by the search route. Pinned
+  by `test_the_exact_match_bonus_is_case_sensitive_and_that_is_pinned` — pinned
+  rather than ignored, because it is otherwise indistinguishable from intended
+  weighting: someone tuning `exact_match_boost` would see it have no effect on a
+  mixed-case query and conclude the weight was wrong.
+- **`_calculate_recency_score` catches bare `Exception`** and returns 0.0, so a
+  broken timestamp is indistinguishable from an old one. Same reasoning: the
+  `scores` array is on the wire.
+- **`Software._ensure_modifiable` does not require `ACTIVE`**, although its error
+  message says "Software must be ACTIVE to be modifiable". `DRAFT` has to be
+  modifiable or nothing could be published. The behaviour is right and the message
+  is wrong; the message is not on the wire, so it is recorded rather than changed.
+- **`update_pricing` does not update `access_type`.** Pricing a free product
+  leaves it `FREE`, so `requires_payment()` is False and the paid branch of the
+  download check never runs. Changing it changes access outcomes.
+
+### Mutation checks
+
+Every claim this phase asserts was checked by breaking the code and confirming a
+test failed.
+
+| Mutation | Caught by |
+|---|---|
+| restore `...` to `ISoftwareRepository.has_purchase` | `test_a_raising_member_actually_raises` |
+| `return False` above the raise in the same port member | same — the test was strengthened because this one survived |
+| delete `SQLAlchemySoftwareRepository.has_purchase` | `test_no_implementation_inherits_a_silent_port_body` |
+| make it `return None` | `test_software_repository.py` |
+| remove the popularity contribution | `test_popularity_increases_score` |
+| record zero-weight contributions | `test_a_zero_weight_signal_is_not_claimed` |
+| remove `name_exact` from the contribution mapping | `test_an_exact_name_match_is_reported_separately` |
+| delete a file listed in the document's tree | `test_the_tree_has_no_file_that_is_not_there` |
+| add a file the tree omits | `test_the_tree_has_no_file_it_forgot` |
+| change the exception count to 28 | `test_the_exception_count_the_document_quotes` |
+| restore `matched_fields` to the search response | `test_matched_fields_is_still_out_of_the_search_response` |
+| add an entry to `ratchet.json` | `test_the_ratchet_is_still_empty` |
+| define `ClamAVScanner` while §8.3 says *(not implemented)* | `test_a_name_marked_not_implemented_is_still_absent` |
+
+Thirteen mutations, thirteen caught — but only after one of them was caught twice.
+`test_a_raising_member_actually_raises` originally asked whether the port body
+*contained* a `raise`, which `return False` written above it satisfies: the method
+silently defaulted to exactly what ADR 0013 exists to prevent, and the guard
+passed. The test now requires the raise to be the first statement, which is the
+shape `Clock.now` already had. This is the third time a check has passed because it
+was looking at the wrong thing rather than because the code was right, after Phase
+7b's route-table hash and Phase 8's `.gitignore` pattern.
+
+The exception count was the other fabrication caught twice: the guard failed while
+it was being written, on the 28 the document claimed, and again when a later edit
+described `Clock` as it had been described rather than as it is.

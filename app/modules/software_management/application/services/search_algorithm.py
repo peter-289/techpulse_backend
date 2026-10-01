@@ -11,11 +11,26 @@ from app.modules.software_management.domain.entities.software import Software
 @dataclass(frozen=True)
 class ScoredSoftware:
     """Container for a software candidate with its calculated relevance score.
-    
+
     Attributes:
         software: The software entity being scored.
         score: Calculated relevance score (higher is more relevant).
-        matched_fields: List of field names where the query matched (e.g., "name", "description").
+        matched_fields: The signals that contributed to ``score`` — ``"name"``,
+            ``"name_exact"``, ``"description"``, ``"popularity"``, ``"recency"``.
+            A signal appears only if it added something, so a zero weight suppresses
+            its name rather than claiming a contribution it did not make.
+
+            The field name says "fields" and the first three entries are fields, but
+            ``"popularity"`` and ``"recency"`` are properties of the software rather
+            than fields of it, and they are recorded for the same reason: the score
+            is a sum of named parts, and a reader asking why one result outranked
+            another is asking which parts moved. The name is kept because the
+            attribute is asserted by name in ``tests/unit/test_search_algorithm.py``.
+
+            This is not part of any HTTP response. The search route returns
+            ``items``, ``scores``, ``total``, ``limit`` and ``offset``
+            (``api/routers/software_router.py``) and drops it, so it is a debugging
+            and analytics surface only.
     """
     software: Software
     score: float
@@ -126,99 +141,103 @@ class SearchAlgorithm:
         
         now = datetime.now(timezone.utc)
         scored: List[ScoredSoftware] = []
-        
+
         for software in candidates:
-            score = self._calculate_relevance_score(
+            contributions = self._score_contributions(
                 software=software,
                 query_tokens=query_tokens,
                 query_normalized=query_normalized,
-                now=now
+                now=now,
             )
-            
-            matched_fields = self._identify_matched_fields(
-                software=software,
-                query_tokens=query_tokens,
-                query_normalized=query_normalized
-            )
-            
+
             scored.append(ScoredSoftware(
                 software=software,
-                score=float(score),
-                matched_fields=matched_fields
+                score=float(sum(contributions.values())),
+                matched_fields=[name for name, value in contributions.items() if value > 0.0],
             ))
-        
+
         # Sort by relevance score (highest first) with tie-breaking by name match count
         scored.sort(key=lambda x: (-x.score, -sum(1 for f in x.matched_fields if f == "name")))
         return scored
 
-    def _calculate_relevance_score(
+    def _score_contributions(
         self,
         software: Software,
         query_tokens: list[str],
         query_normalized: str,
-        now: datetime
-    ) -> float:
-        """Calculate the total relevance score for a single software candidate.
-        
-        Args:
-            software: The Software entity to score.
-            query_tokens: Pre-tokenized query tokens (lowercased).
-            query_normalized: Original normalized query string (lowercased).
-            now: Current timestamp for recency calculations.
-        
-        Returns:
-            Total relevance score as a float.
-        """
-        base_score = 0.0
-        
-        # Name matching - primary signal for search relevance
-        name_score = self._calculate_name_score(software, query_tokens, query_normalized)
-        base_score += name_score
-        
-        # Description matching - secondary signal for semantic relevance  
-        description_score = self._calculate_description_score(software, query_tokens)
-        base_score += description_score
-        
-        # Popularity signal - favors well-established, widely used software
-        popularity_score = self._calculate_popularity_score(software)
-        base_score += popularity_score
-        
-        # Recency signal - favors newer, recently updated software
-        recency_score = self._calculate_recency_score(software, now)
-        base_score += recency_score
-        
-        return base_score
+        now: datetime,
+    ) -> dict[str, float]:
+        """Score one candidate, naming each part of the score.
 
-    def _calculate_name_score(
+        The score is a sum of independent signals, and the list of what matched is
+        the same sum read back by name. Returning both from one pass is the point:
+        this used to be a `_calculate_relevance_score` that added four values and
+        returned the total, plus a separate `_identify_matched_fields` that re-derived
+        which of them applied. Two derivations of one fact is how the two could
+        disagree, and they did — the query signals were recorded and the popularity
+        and recency signals were not, so a result could be ranked by a signal it did
+        not claim. `tests/unit/test_search_algorithm.py` failed on exactly that from
+        the Phase 0 baseline until Phase 9a.
+
+        A signal with a zero weight contributes zero and is therefore absent from
+        `matched_fields`, which is the truthful reading: with `popularity_weight=0`
+        no result should claim popularity moved it.
+
+        Returns:
+            Signal name to contribution, in the order they are summed. Every value is
+            >= 0, so `value > 0.0` means "this signal moved the score".
+        """
+        contributions: dict[str, float] = {}
+        contributions.update(
+            self._calculate_name_contributions(software, query_tokens, query_normalized)
+        )
+        contributions["description"] = self._calculate_description_score(
+            software, query_tokens
+        )
+        contributions["popularity"] = self._calculate_popularity_score(software)
+        contributions["recency"] = self._calculate_recency_score(software, now)
+        return contributions
+
+    def _calculate_name_contributions(
         self,
         software: Software,
         query_tokens: list[str],
-        query_normalized: str
-    ) -> float:
-        """Calculate name relevance score including exact match bonus.
-        
+        query_normalized: str,
+    ) -> dict[str, float]:
+        """Split the name signal into token matches and the whole-word exact bonus.
+
+        Two signals rather than one, because they are two different reasons a result
+        ranks where it does: a query token appearing in the name is weak evidence,
+        and the query *being* the name is strong. Recorded separately since the
+        distinction was there before Phase 9a and folding them together would have
+        thrown it away.
+
+        The two sum to the value `_calculate_name_score` used to return, so the
+        total score is unchanged.
+
         Args:
             software: Software entity to evaluate.
             query_tokens: Tokenized query.
             query_normalized: Normalized query string.
-        
+
         Returns:
-            Name relevance score.
+            ``{"name": ..., "name_exact": ...}``, with the absent part as 0.0.
         """
-        score = 0.0
-        
-        # Count matching tokens in software name
         name_tokens = self._tokens(software.name)
-        exact_word_matches = sum(1 for token in query_tokens if token == software.name.lower())
-        partial_matches = sum(1 for token in query_tokens if token in name_tokens and token != software.name.lower())
-        
-        score += self.name_weight * (exact_word_matches * 2 + partial_matches)
-        
-        # Apply exact match bonus for whole-word name matches
-        if query_normalized and software.name.lower() == query_normalized:
-            score += self.exact_match_boost
-        
-        return score
+        lowered = software.name.lower()
+        exact_word_matches = sum(1 for token in query_tokens if token == lowered)
+        partial_matches = sum(
+            1 for token in query_tokens if token in name_tokens and token != lowered
+        )
+
+        return {
+            "name": self.name_weight * (exact_word_matches * 2 + partial_matches),
+            "name_exact": (
+                self.exact_match_boost
+                if query_normalized and lowered == query_normalized
+                else 0.0
+            ),
+        }
 
     def _calculate_description_score(self, software: Software, query_tokens: list[str]) -> float:
         """Calculate description relevance score.
@@ -281,55 +300,18 @@ class SearchAlgorithm:
         created_at = getattr(software, "created_at", None)
         if not created_at:
             return 0.0
-        
+
         try:
             # Calculate age in days with timezone awareness
             age_seconds = max(0.0, (now - created_at).total_seconds())
             age_days = age_seconds / 86400.0
-            
+
             # Exponential decay: score decays from 1.0 (new) to near 0 (old)
             # Half-life of approximately 1 year (365 days)
             recency_score = exp(-age_days / 365.0)
-            
+
             return self.recency_weight * recency_score
-            
+
         except Exception:
             # Fail gracefully if datetime calculations fail
             return 0.0
-
-    def _identify_matched_fields(
-        self,
-        software: Software,
-        query_tokens: list[str],
-        query_normalized: str
-    ) -> list[str]:
-        """Identify which software fields matched the query.
-        
-        Tracks match sources for debugging, analytics, and UI highlighting.
-        
-        Args:
-            software: Software entity to evaluate.
-            query_tokens: Tokenized query.
-            query_normalized: Normalized query string.
-        
-        Returns:
-            List of field names where matches were found (e.g., ["name", "description"]).
-        """
-        matched_fields = []
-        
-        # Check name matches
-        name_tokens = self._tokens(software.name)
-        if any(token in name_tokens for token in query_tokens):
-            matched_fields.append("name")
-        
-        # Check for whole-word exact match in name
-        if query_normalized and software.name.lower() == query_normalized:
-            matched_fields.append("name_exact")
-        
-        # Check description matches
-        if software.description:
-            desc_tokens = self._tokens(software.description)
-            if any(token in desc_tokens for token in query_tokens):
-                matched_fields.append("description")
-        
-        return matched_fields

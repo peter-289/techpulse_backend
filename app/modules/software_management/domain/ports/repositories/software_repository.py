@@ -16,8 +16,21 @@ class ISoftwareRepository(Protocol):
         ...
 
     async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
-        """Check if a buyer has a purchase."""
-        ...
+        """Check if a buyer has a purchase.
+
+        This one method deliberately does not have a ``...`` body. The
+        implementation subclasses this protocol explicitly, so an unimplemented
+        member is inherited rather than missing: with a ``...`` body
+        ``has_purchase`` returned ``None`` for every user, which is falsy, which
+        read as "this user has no purchase" and cost a 403 to anyone who had
+        actually bought the software. An unimplemented query that decides
+        authorization has to be loud. ``tests/architecture/
+        test_ports_have_no_silent_defaults.py`` fails if this returns to ``...``.
+        """
+        raise NotImplementedError(
+            "has_purchase has no data source: the purchase table was removed with the "
+            "billing module. See docs/REVIEW.md, Phase 9a, 'Left alone deliberately'."
+        )
 
     async def list_marketplace(
         self,

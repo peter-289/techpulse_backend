@@ -11,7 +11,11 @@ looks like. Where they disagree, the ADRs win and the architecture document is
 a bug.
 
 The boundary rules described here are executable:
-`tests/architecture/layer_rules.py`.
+`tests/architecture/layer_rules.py`. Two more documents are enforced by the
+suite rather than by convention: a port may not silently default
+(`tests/architecture/test_ports_have_no_silent_defaults.py`), and the
+`software_management` architecture document is checked against the code
+(`tests/architecture/test_architecture_doc_matches_code.py`).
 
 ## Index
 
@@ -29,6 +33,8 @@ The boundary rules described here are executable:
 | 0010 | [`UserSession` is a user-context aggregate, and its writes are explicit](0010-user-session-aggregate-and-explicit-save.md) | Accepted |
 | 0011 | [One composition module per bounded context](0011-one-composition-module-per-bounded-context.md) | Accepted |
 | 0012 | [The admin API belongs to the security context, and log reading is a port](0012-admin-api-in-security-and-log-tail-port.md) | Accepted |
+| 0013 | [A port member may not silently default](0013-port-members-may-not-silently-default.md) | Accepted |
+| 0014 | [The reference architecture document is a checked artefact](0014-the-architecture-document-is-a-checked-artefact.md) | Accepted |
 
 ## Template
 
@@ -71,4 +77,4 @@ breakdown, including the code for review, see `docs/REVIEW.md`.
 | 7a | `user`/`UserSession` aggregate; explicit `save` on the session repository | 0001, 0002, 0010 |
 | 7b | `shared.dependencies` split by context; revalidation off the ORM | 0001, 0011 |
 | 8 | `admin_router` into `security`; `LogTail` port; ratchet drained | 0001, 0002, 0012 |
-| 9 | Routers stop constructing `UnitOfWork`; docs corrected | 0001, 0004 |
+| 9a | Port members may not silently default; `ARCHITECTURE.md` corrected and checked | 0001, 0004, 0013, 0014 |

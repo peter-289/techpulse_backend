@@ -32,9 +32,9 @@ class DownloadService:
     """Application service for generating download URLs and recording downloads."""
 
     def __init__(self, *, uow: SoftwareManagementUnitOfWork, url_signer: DownloadSigner, storage: Storage) -> None:
-        self._uow = uow
-        self._url_signer = url_signer
-        self._storage = storage
+        self._uow = uow # unit_of_work Abstraction
+        self._url_signer = url_signer # URL Signer Abstraction
+        self._storage = storage  # Storage Abstraction
 
     async def create_download_url(
         self,
@@ -59,9 +59,9 @@ class DownloadService:
             raise VersionNotDownloadableError(f"Version {semver} is not downloadable.")
         if len(version.artifacts) != 1:
             raise ArtifactNotFoundError("Version download requires exactly one artifact.")
-        has_purchase = False
-        if hasattr(self._uow.software_repo, "has_purchase"):
-            has_purchase = await self._uow.software_repo.has_purchase(software_id=software_id, user_id=user_id)
+        has_purchase = await self._uow.software_repo.has_purchase(
+            software_id=software_id, user_id=user_id
+        )
         if not software.is_public() and not software.is_owned_by(user_id) and not has_purchase:
             raise SoftwareAccessDeniedError("You are not authorized to download this software.")
 
