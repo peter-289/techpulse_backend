@@ -22,6 +22,7 @@ from app.modules.shared.enums import SoftwareVisibility, VersionStatus
 from app.modules.software_management.application.services.download_service import DownloadService
 from app.modules.software_management.application.services.software_service import SoftwareService
 from app.modules.software_management.domain.entities.artifact import Artifact
+from app.modules.software_management.domain.ports.download_signer import TokenVerification
 from app.modules.software_management.domain.entities.software import Software
 from app.modules.software_management.domain.value_objects import OwnedSoftwareCard
 from app.modules.software_management.domain.value_objects.value_objects import Currency
@@ -169,8 +170,11 @@ class _Signer:
             url = f"https://signed.example/{storage_key}"
         return _Url()
 
-    def verify_token(self, **kwargs) -> bool:
-        return True
+    def verify_token(self, **kwargs) -> TokenVerification:
+        # A real TokenVerification, not a bare True: the port returns this shape,
+        # and a fake that returns a bool would keep passing if the service started
+        # reading ``result.reason`` off it.
+        return TokenVerification(valid=True)
 
 
 def _software_with_artifact(*, version_status: VersionStatus) -> tuple[Software, object]:

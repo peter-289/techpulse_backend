@@ -621,9 +621,9 @@ Takes a unit of work, a `DownloadSigner` and a `Storage`.
 |---|---|
 | `create_download_url(*, software_id, version_number, user_id)` | Loads the software, resolves the version, requires it to be downloadable and to carry exactly one artifact, authorizes, signs, then records the download. |
 | `create_artifact_download_url(*, artifact, user_id=None)` | Signs a URL for a specific artifact. Performs no authorization of its own. |
-| `verify_token(*, storage_key, expires, token, method)` | Delegates to the signer, raising `SoftwareAccessDeniedError` on a bad token. |
+| `verify_token(*, storage_key, expires, token, method)` | Delegates to the signer and translates its verdict into a domain error: `ExpiredDownloadTokenError` (410) when the signature is authentic but lapsed, `InvalidDownloadTokenError` (403) for anything else. Performs **no** authorization — this endpoint has no session, so the token is the credential. |
 | `record_download(*, software_id, version_id=None)` | Opens a write transaction, increments the software's and the version's counters, saves. |
-| `read_file(*, storage_key)` | **This is where the storage→domain translation in §12.4 actually happens.** It is not in the previous version of this document, which described that mapping as infrastructure's job. |
+| `read_file(*, storage_key)` | **This is where the storage→domain translation in §12.4 actually happens.** It is not in the previous version of this document, which described that mapping as infrastructure's job. Returns a `BinaryIO`; the router streams it and closes it, so the body is never held in memory. |
 
 **Authorization is weaker than §6.3 of the previous document claimed.** The check
 is `not is_public() and not is_owned_by() and not has_purchase()`, so public
@@ -635,6 +635,54 @@ software needs no authorization at all. The class that encodes the fuller rule,
 version of this document said it did. It also calls `version.record_download()`
 as well as the software-level counter.
 
+### 6.4 The download is two routes, not one
+
+```
+GET /api/v1/software-management/{software_id}/versions/{version}/artifacts/{artifact_id}/download
+    authenticated ── abuse guard ── authorize ── record ── sign ── 307
+                                          │
+                                          ▼
+GET /api/v1/software-management/storage/download/{storage_key:path}?expires=&token=
+    verify ── open through Storage ── stream ── close
+```
+
+The first is the authorized half and it requires a session. The second serves the
+bytes and deliberately does **not**: the HMAC token is its credential, and it is
+short-lived and bound to the key, the method and its own expiry, so it cannot be
+pointed at a different artifact or replayed later. Nothing authorizes twice —
+`SoftwareService` and `DownloadService` both refuse before signing, and that is a
+defence in depth, not two rules.
+
+**These are different things and the distinction has to be held to:**
+
+| | Storage key | HTTP route |
+|---|---|---|
+| Is | a logical identifier, relative to the storage root | a URL path |
+| Looks like | `software/{sid}/versions/{vid}/{aid}/file.pdf` | `/api/v1/software-management/storage/download/…` |
+| Who resolves it | `LocalStorage`, after checking it stays under the root | FastAPI, from `SIGNED_DOWNLOAD_ROUTE` |
+| Reaches the client | only as the signed path tail | yes |
+
+The key is a `:path` tail, so its `/` separators stay unencoded and each segment
+is escaped individually. `quote(storage_key, safe="")` — which is what this
+context used — collapsed the key into one opaque segment, so the route matched a
+different key than the one that had been signed.
+
+The two route descriptions live in one constant, `SIGNED_DOWNLOAD_ROUTE`, asserted
+against the router's own prefix at import. They were previously two independent
+settings — the router's literal, and an environment variable defaulting to `""` —
+and nothing could make them agree. That, not the string concatenation around
+them, is why the redirect 404'd: `f"{backend_url}/{download_path.strip('/')}/{key}"`
+with an empty `download_path` emitted `http://host//software/…`, and even with a
+correct path it would have pointed at a route that only exists because the router
+declares it.
+
+The constant sits in `domain/ports/download_signer.py` rather than beside either
+of the two things that have to agree about it. The signer must build URLs for the
+route and the router must declare it, so defining it in either leaves the other
+importing across a layer it should not — infrastructure from the API, or the API
+from infrastructure. On the port it is read inward by both, alongside
+`SIGNED_DOWNLOAD_METHODS`, which is the rest of the same contract.
+
 ---
 
 ## 7. Port definitions
@@ -644,7 +692,7 @@ Seven ports, not four.
 | Port | Contract |
 |---|---|
 | `Storage` | `save(*, storage_key, source_path: Path)`, `open(*, storage_key) -> BinaryIO`, `delete(*, storage_key)`, `exists(*, storage_key) -> bool`. **All synchronous** by design; callers use `asyncio.to_thread`. |
-| `DownloadSigner` | `create_url(*, storage_key, method="GET") -> SignedDownloadUrl`, `verify_token(*, storage_key, expires, token, method="GET") -> bool`. The expiry comes from adapter settings, not the caller. |
+| `DownloadSigner` | `create_url(*, storage_key, method="GET") -> SignedDownloadUrl`, `verify_token(*, storage_key, expires, token, method="GET") -> TokenVerification`. The expiry comes from adapter settings, not the caller. `TokenVerification` carries a `valid` flag plus a `TokenRejectionReason` (missing / malformed / invalid_resource / unsupported_method / expired / signature_mismatch); a bare `bool` previously collapsed all six into one answer. The signature is checked *before* the expiry, so `expired` means the signature is authentic and has lapsed — otherwise anyone could present an unsigned token with a past expiry and be told the one answer that means "ask again". `SIGNED_DOWNLOAD_METHODS` is `{GET}` and a test asserts it against the router's declared methods, because FastAPI's `APIRoute` does not derive `HEAD` from `GET` and admitting it would mint URLs that answer 405. |
 | `MalwareScanner` | `scan_file(*, file_path: Path, filename, sha256, content_type: str \| None) -> ScanResult`. |
 | `NotificationSender` | `send(*, recipient_id, event: SoftwareDomainEvent, channels: list[str])`. Declared and unused — no implementation exists. |
 | `DomainEventPublisher` | `publish(events: Sequence[DomainEvent])`. The real outbound port for events; the previous document named `NotificationSender` for this role. |
@@ -926,12 +974,12 @@ where Phase 3 left them.
 
 ### 12.1 Domain exceptions
 
-`domain/exceptions.py` holds 25 classes, not the 5 the previous version listed. The
+`domain/exceptions.py` holds 29 classes, not the 5 the previous version listed. The
 shape is not two independent hierarchies: `SoftwareDomainError` is the root, with
-17 direct subclasses, and `CategoryDomainError` is one of them — a category failure
+20 direct subclasses, and `CategoryDomainError` is one of them — a category failure
 is caught by `except SoftwareDomainError`, which is why every `software_router`
 handler also answers for categories. Below `CategoryDomainError` there are five
-more. All 25 are catchable as `SoftwareDomainError`.
+more. All 28 are catchable as `SoftwareDomainError`.
 
 The base classes are `SoftwareDomainError`, `SoftwareNotFoundError`,
 `SoftwareAccessDeniedError`, `InvalidStateTransitionError` and
@@ -942,8 +990,31 @@ covers both; `VersionNotDownloadableError`, `DownloadDeniedError`,
 `SoftwareArchivedError`, `SoftwareDeletedError`, `SoftwareNotPublishedError`,
 `VersionUnavailableError`, `OwnerCannotPurchaseError`, `DuplicatePurchaseError`,
 `InvalidSemVerError`, `ArtifactIntegrityError`, `MalwareScanPendingError`,
-`SoftwareValidationError` (a frozen dataclass, not a plain `Exception`), and the
-six `Category*` classes.
+`SoftwareValidationError` (a frozen dataclass, not a plain `Exception`), the three
+download-delivery classes below, and the six `Category*` classes.
+
+Three download-delivery errors sit under `SoftwareAccessDeniedError` rather than
+the root, because all three refuse a request that carries no credentials of its
+own: `InvalidDownloadTokenError` (missing, malformed, forged, or bound to another
+resource or method), `ExpiredDownloadTokenError` (authentic but lapsed), and
+`UnsafeStorageKeyError` (the token was authentic, but the key it is bound to is
+not addressable — a symlink resolving outside the storage root, which no
+string-level check can see). The first two are separate classes because their
+remedies differ: a lapsed link is fixed by asking for a new one, a forged one is
+not, and collapsing them into one 403 told a client with a stale link that it had
+been refused access.
+
+The third is a sibling rather than a fourth reason to merge, and the distinction
+is narrow enough to be worth stating. It was previously raised *as*
+`InvalidDownloadTokenError`, which made an unaddressable key indistinguishable
+from a forged token even in the logs — and the two call for opposite responses,
+since one means a client with a broken link and the other a request probing the
+storage layout. It is reachable only when the signer accepts a key that the
+adapter then refuses, since both validate the key's syntax; the residual case is
+filesystem state, which is why the check stays in `LocalStorage._resolve_path`.
+`ArtifactStorageUnreadableError` is *not* a denial: it is a server-side failure
+(500) whose message is deliberately generic, because the adapter's own message
+names the resolved path under `/app/storage`.
 
 Three names in `app/exceptions/exceptions.py` collide with domain names
 (`RepositoryUnavailableError`, `DuplicatePurchaseError`,
@@ -965,20 +1036,20 @@ wrong, because it described one layer and there are two.
 
 **Layer 1 — the global registry, `app/exceptions/handlers.py`.** Every handler
 returns a `JSONResponse`, not `raise HTTPException`; the previous version showed a
-handler that re-raises. It registers 56 exception types across the whole app, not
+handler that re-raises. It registers 57 exception types across the whole app, not
 just this context, and maps them to ten status codes — seven of them beyond the
 400/403/404 this context produces on its own (401, 409, 410, 422, 429, 500, 503).
 
 | Exception | Status |
 |---|---|
 | `SoftwareDomainError` (and `CategoryDomainError`, `ResourceDomainError`, `DomainError`) | 400 |
-| `SoftwareAccessDeniedError`, `SoftwareOwnerCannotPurchaseError`, `SoftwareNotPublishedError`, `DownloadDeniedError` | 403 |
+| `SoftwareAccessDeniedError`, `SoftwareOwnerCannotPurchaseError`, `SoftwareNotPublishedError`, `DownloadDeniedError`, `InvalidDownloadTokenError`, `UnsafeStorageKeyError` | 403 |
 | `SoftwareNotFoundError`, `VersionNotFoundError` via base, `CategoryNotFoundError`, `StorageFileNotFoundError` | 404 |
 | `InvalidStateTransitionError`, `SoftwareArchivedError`, `VersionUnavailableError`, `MalwareScanPendingError`, `DuplicateCategoryError`, `CategoryInUseError`, `CategoryDeletedError`, `SoftwareDuplicatePurchaseError`, `ConflictError` | 409 |
-| `SoftwareDeletedError` | 410 |
+| `SoftwareDeletedError`, `ExpiredDownloadTokenError` | 410 |
 | `InvalidSemVerError`, `ArtifactIntegrityError`, `SoftwareValidationError`, `ValidationError`, `InvalidMoneyError`, `InvalidCurrencyError` | 422 |
 | `RepositoryUnavailableError` (both the domain class and the shared-kernel one), `SoftwareRepositoryUnavailableError` (an alias of the domain class), `CategoryRepositoryUnavailableError`, `StorageUnavailableError`, `ExternalServiceError` | 503 |
-| `StorageError`, `StorageReadError`, `StorageWriteError`, `StagingError` | 500 |
+| `StorageError`, `StorageReadError`, `StorageWriteError`, `StagingError`, `ArtifactStorageUnreadableError` | 500 |
 | `StagingTooLargeError` | 400 |
 | `UnauthorizedError` | 401 |
 | `PermissionError` | 403 |
@@ -1016,8 +1087,9 @@ does not change. Recorded in `docs/REVIEW.md`, Phase 9a.
 | `SQLAlchemyError` | `RepositoryUnavailableError` | `sqlalchemy_software_repository` | 503 |
 | `SQLAlchemyError` | `CategoryRepositoryUnavailableError` | `category_repo` | 503 |
 | `StorageFileNotFoundError` | `ArtifactNotFoundError` | `DownloadService.read_file` | 404 |
-| `StorageSecurityError` | `SoftwareAccessDeniedError` | `DownloadService.read_file` | 403 |
+| `StorageSecurityError` | `UnsafeStorageKeyError` | `DownloadService.read_file` | 403 |
 | `StorageUnavailableError` | `ExternalServiceError` | `DownloadService.read_file` | 503 |
+| `StorageReadError` | `ArtifactStorageUnreadableError` | `DownloadService.read_file` | 500 |
 | `StagingTooLargeError` | (not translated) | the port raises it directly | 400 |
 | non-clean `ScanResult` | bare `SoftwareDomainError` | `SoftwareService._process_artifact` | 400 |
 

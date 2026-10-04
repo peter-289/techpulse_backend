@@ -4,9 +4,9 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import shutil
 import tempfile
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
@@ -14,8 +14,12 @@ from urllib.parse import quote
 from typing import BinaryIO
 
 from app.modules.software_management.domain.ports.download_signer import (
+    SIGNED_DOWNLOAD_METHODS,
+    SIGNED_DOWNLOAD_ROUTE,
     DownloadSigner,
     SignedDownloadUrl,
+    TokenRejectionReason,
+    TokenVerification,
 )
 from app.modules.software_management.domain.ports.storage import (
     Storage,
@@ -40,7 +44,20 @@ __all__ = [
     "StorageSettings",
     "StorageUnavailableError",
     "StorageWriteError",
+    "TokenRejectionReason",
+    "TokenVerification",
 ]
+
+#: A hex-encoded SHA-256 HMAC digest. Checked before any comparison so a token
+#: of the wrong shape is reported as malformed rather than as a signature
+#: mismatch, and so ``hmac.compare_digest`` is never handed non-hex input.
+_HEX_DIGITS = re.compile(r"\A[0-9a-f]{64}\Z")
+
+#: A Windows drive prefix -- ``C:`` or ``C:/Windows/...``. Matched after
+#: separators have been normalised, so the backslash spellings are covered too.
+#: A UNC path (``\\\\server\\share``) is not matched here; it normalises to one
+#: beginning ``//`` and is refused as an absolute path instead.
+_DRIVE_QUALIFIED = re.compile(r"\A[A-Za-z]:")
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,11 +74,46 @@ class DownloadUrlSignerSettings:
     """Configuration for the HMAC download-URL signer."""
 
     backend_url: str
-    download_path: str
     signing_secret: str
     default_expiry_seconds: int = 900
+    download_path: str = SIGNED_DOWNLOAD_ROUTE
 
 logger = logging.getLogger(__name__)
+
+
+def _join_url_path(*segments: str) -> str:
+    """Join URL path segments with exactly one separator between each.
+
+    Every segment is stripped of surrounding whitespace and leading/trailing
+    separators before joining, so no combination of ``"/"``, ``""`` or
+    ``"downloads/"`` can produce ``//`` after the scheme or a duplicated
+    separator at a boundary. Segments that reduce to nothing are dropped, which
+    is what makes ``download_path="/"`` and ``download_path=""`` mean "no prefix"
+    instead of "a slash of their own".
+
+    Absolute inputs are treated as path segments rather than as a replacement for
+    the whole path: a leading ``/`` is stripped, so a misconfigured segment
+    cannot silently truncate everything before it.
+    """
+    cleaned = [segment.strip().strip("/") for segment in segments]
+    joined = "/".join(part for part in cleaned if part)
+    return f"/{joined}" if joined else ""
+
+
+def _quote_storage_key_path(storage_key: str) -> str:
+    """Percent-encode a storage key for use as a ``{storage_key:path}`` tail.
+
+    ``/`` stays safe because the route reads the key as a hierarchy; every other
+    reserved character in a segment is escaped. Encoding the whole key at once
+    with ``safe=""`` would collapse the hierarchy into a single segment and the
+    route would no longer recognise it.
+    """
+    return "/".join(quote(segment, safe="") for segment in storage_key.split("/"))
+
+
+def _rejected(reason: TokenRejectionReason) -> TokenVerification:
+    """Build the rejection result for ``reason``."""
+    return TokenVerification(valid=False, reason=reason)
 
 
 def _validate_storage_key(storage_key: str) -> str:
@@ -112,7 +164,11 @@ def _validate_storage_key(storage_key: str) -> str:
         raise ValueError("Path traversal is not permitted.")
 
     # Reject Windows drive prefixes (e.g. C:).
-    if path.drive:
+    # ``PurePosixPath.drive`` is checked too, and is always empty: it is a
+    # Windows-only attribute and reading it off a POSIX path is how the previous
+    # version of this check came to be dead code. A key only counts as relative if
+    # it survives this as well.
+    if path.drive or _DRIVE_QUALIFIED.match(key):
         raise ValueError("Drive-qualified paths are not permitted.")
 
     # Reject control characters.
@@ -132,7 +188,14 @@ def _validate_storage_key(storage_key: str) -> str:
 
 
 class HmacDownloadUrlSigner(DownloadSigner):
-    """Signs and verifies download URLs with HMAC-SHA256."""
+    """Signs and verifies download URLs with HMAC-SHA256.
+
+    The signer owns the *shape* of a signed URL, because only it knows which
+    route the token will be presented to. It does not own whether that URL may
+    be issued: authorization happens before :meth:`create_url` is called, and the
+    serving endpoint re-verifies the token without re-authorizing.
+    """
+
     def __init__(self, settings: DownloadUrlSignerSettings) -> None:
 
         self._settings = settings
@@ -148,7 +211,12 @@ class HmacDownloadUrlSigner(DownloadSigner):
              - the storage key
              - the HTTP method
              - an expiration timestamp
-       
+
+            Binding all three is what stops a valid token being replayed against
+            a different artifact, a different verb, or after it expires. The key
+            is part of the signed payload, so it cannot be swapped in the URL
+            without invalidating the signature.
+
             The URL itself conveys no authorization; callers are responsible for
             ensuring the requester is permitted to download the referenced object
             before invoking this method.
@@ -156,9 +224,6 @@ class HmacDownloadUrlSigner(DownloadSigner):
             Args:
                storage_key:
                    Logical identifier of the stored object.
-       
-               expires_in_seconds:
-                   Lifetime of the signed URL.
 
                method:
                    HTTP method the signature is valid for.
@@ -168,7 +233,8 @@ class HmacDownloadUrlSigner(DownloadSigner):
 
             Raises:
                 ValueError:
-                    If the storage key or expiration is invalid.
+                    If the storage key is malformed, or ``method`` is not a
+                    method signed URLs may be bound to.
             """
             _expiry_seconds = self._settings.default_expiry_seconds
             if _expiry_seconds <= 0:
@@ -176,7 +242,12 @@ class HmacDownloadUrlSigner(DownloadSigner):
             
             key = self._validate_storage_key(storage_key=storage_key)
             method = self._normalize(method)
-            expires_at = self._calculate_expiry(expires_in_seconds=_expiry_seconds)
+            if method not in SIGNED_DOWNLOAD_METHODS:
+                raise ValueError(
+                    f"Signed download URLs cannot be bound to method {method!r}."
+                )
+
+            expires_at = int(self._calculate_expiry(expires_in_seconds=_expiry_seconds).timestamp())
 
             payload = self._build_payload(
                 method=method,
@@ -205,42 +276,56 @@ class HmacDownloadUrlSigner(DownloadSigner):
         expires: int,
         token: str,
         method: str,
-        ) -> bool:
+        ) -> TokenVerification:
          """Verify a signed download token.
 
           Returns:
-             True if the signature is valid and the URL has not expired.
-             False otherwise.
+             A ``TokenVerification`` whose ``reason`` says *which* check failed.
+             A caller that only wants a yes/no answer can read ``valid``.
 
           Notes:
               This method performs cryptographic verification only.
               It does not check whether the referenced file exists or whether
               the caller is authorized to access it.
           """
-         if not token:
-            return False
+         if not token or not token.strip():
+            return _rejected(TokenRejectionReason.MISSING)
 
-         if len(token) != 64:  # SHA-256 hex digest length
-             return False
+         if not _HEX_DIGITS.fullmatch(token):
+             return _rejected(TokenRejectionReason.MALFORMED)
+
+         method = self._normalize(method)
+         if method not in SIGNED_DOWNLOAD_METHODS:
+             return _rejected(TokenRejectionReason.UNSUPPORTED_METHOD)
+
          try:
              key = self._validate_storage_key(storage_key=storage_key)
          except ValueError:
-             return False
-         
-         method = self._normalize(method)
-         if expires < int(time.time()):
-                return False
-         
-         expires_at = datetime.fromtimestamp(expires, tz=UTC)
+             return _rejected(TokenRejectionReason.INVALID_RESOURCE)
 
-         # Rebuild payload
+         try:
+             expires_at = int(expires)
+         except (TypeError, ValueError):
+             return _rejected(TokenRejectionReason.MALFORMED)
+
          payload = self._build_payload(
               method=method,
               storage_key=key,
               expires_at=expires_at,
          )
          expected = self._sign_payload(payload=payload)
-         return self._constant_time_compare(expected, token)
+         if not self._constant_time_compare(expected, token):
+             return _rejected(TokenRejectionReason.SIGNATURE_MISMATCH)
+
+         # Expiry last, so "expired" means what it says: this signature is
+         # authentic and has lapsed. Checking it first would let anyone holding no
+         # valid token at all distinguish "lapsed" from "forged" by picking an
+         # expiry in the past, and would misreport a forged token as expired --
+         # which is the one answer a client is entitled to act on by asking again.
+         if expires_at <= int(datetime.now(UTC).timestamp()):
+             return _rejected(TokenRejectionReason.EXPIRED)
+
+         return TokenVerification(valid=True)
              
 
     # === HELPERS ===
@@ -273,16 +358,27 @@ class HmacDownloadUrlSigner(DownloadSigner):
         return _validate_storage_key(storage_key)
     
     def _calculate_expiry(self, expires_in_seconds: int) -> datetime:
-        """Calculate the expiration timestamp for the signed URL."""
-        return datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
+        """Calculate the expiration timestamp for the signed URL.
 
-    def _build_payload(self, *, method: str, storage_key: str, expires_at: int  ) -> str:
-        """Build the canonical payload used for signing."""
+        Aware UTC, and truncated to whole seconds: the value is carried in a URL
+        query parameter and re-derived from that integer on verification, so a
+        sub-second remainder would sign a timestamp the verifier can never
+        reproduce.
+        """
+        expiry = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
+        return datetime.fromtimestamp(int(expiry.timestamp()), tz=UTC)
+
+    def _build_payload(self, *, method: str, storage_key: str, expires_at: int) -> bytes:
+        """Build the canonical payload used for signing.
+
+        ``expires_at`` is a Unix timestamp on both the signing and the verifying
+        side, so the two always agree on the exact string that is authenticated.
+        """
         payload = "\n".join(
             (
                 self._normalize(method=method),
                 storage_key,
-                str(int(expires_at.timestamp()))
+                str(int(expires_at)),
             )
         )
         return payload.encode("utf-8")
@@ -295,14 +391,25 @@ class HmacDownloadUrlSigner(DownloadSigner):
             hashlib.sha256).hexdigest()
 
     def _build_url(self, *, storage_key: str, expires_at: int, token: str) -> str:
-        """Construct the full signed URL."""
-        expires = int(expires_at.timestamp())
-        return (
-            f"{self._settings.backend_url.rstrip('/')}/"
-            f"{self._settings.download_path.strip('/')}/"
-            f"{quote(storage_key, safe='')}"
-            f"?expires={expires}&token={token}"
-        )
+        """Construct the full signed URL for the artifact-serving route.
+
+        The storage key is a *logical identifier*, not a filesystem path, and it
+        is not the HTTP route either -- it is carried as the ``{storage_key:path}``
+        tail of :data:`SIGNED_DOWNLOAD_ROUTE`. Because that tail is a hierarchical
+        path converter, the key's own ``/`` separators must survive into the URL:
+        encoding them with ``quote(storage_key, safe="")`` produced
+        ``software%2F123%2Ffile.pdf``, which is one opaque segment that the route
+        would either miss or decode into a key that no longer matched the one that
+        was signed. Each segment is therefore encoded individually with ``/`` left
+        safe, so a filename containing a space or a ``#`` is escaped while the
+        hierarchy stays intact.
+        """
+        base = self._settings.backend_url.strip().rstrip("/")
+        if not base:
+            raise ValueError("backend_url must be a non-empty absolute base URL.")
+
+        path = _join_url_path(self._settings.download_path, _quote_storage_key_path(storage_key))
+        return f"{base}{path}?expires={int(expires_at)}&token={token}"
 
     def _constant_time_compare(self, expected: str, provided: str)->bool:
         """Constant-time comparison to prevent timing attacks."""
@@ -424,7 +531,8 @@ class LocalStorage(Storage):
             StorageSecurityError:
                 If the resolved path would escape the storage root.
             StorageFileNotFoundError:
-                If the artifact does not exist.
+                If the artifact does not exist, or the key names a directory
+                rather than a file.
             StorageReadError:
                 If the file cannot be opened for reading.
         """
@@ -439,9 +547,13 @@ class LocalStorage(Storage):
                 "Storage root is inaccessible."
             ) from exc
 
-        if not path.exists():
+        # ``exists()`` is true for a directory, and opening one raises
+        # ``IsADirectoryError`` -- which the handler below turns into a read
+        # failure and therefore a 500. A directory is not an artifact, so it is
+        # "not found" like any other thing that is not a file here.
+        if not path.is_file():
             raise StorageFileNotFoundError(
-                f"Storage key does not exist: {key!r}"
+                f"Storage key does not name a file: {key!r}"
             )
 
         try:

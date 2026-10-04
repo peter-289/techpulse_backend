@@ -1,10 +1,17 @@
-from pathlib import Path
+from collections.abc import Iterator
+from pathlib import PurePosixPath
+from typing import BinaryIO
+from urllib.parse import quote
 from uuid import UUID
 
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
+from app.modules.software_management.domain.ports.download_signer import (
+    SIGNED_DOWNLOAD_ROUTE,
+)
 from app.modules.security.dependencies import (
     CurrentUser,
     get_abuse_protection,
@@ -400,29 +407,106 @@ async def admin_summary(
         total_downloads=sum(version.download_count for version in versions),
     )
 
-@router.get("/storage/download/{storage_key:path}")
-async def internal_storage_download(
+#: Bytes read per iteration while streaming an artifact out of storage. Fixed
+#: rather than "iterate the file object": ``iter()`` on a binary file splits on
+#: newline, so an artifact with no newlines in it -- a PDF, an image, a zip --
+#: arrives as one chunk the size of the whole file. That is the difference
+#: between streaming and buffering the entire artifact in memory.
+STREAM_CHUNK_SIZE = 1024 * 1024
+
+#: This router's path for the signed artifact-serving endpoint, relative to
+#: :data:`SOFTWARE_ROUTER_PREFIX`.
+#:
+#: Spelled out as a literal rather than sliced out of ``SIGNED_DOWNLOAD_ROUTE``
+#: inside the decorator. Slicing looked equivalent and was not: inside an
+#: f-string, ``f"{route[len(prefix)]}"`` resolves the format-spec mini-language
+#: rather than the slice, and yields ``"/"``. The route then registered as
+#: ``/api/v1/software-management//{storage_key:path}`` -- which is the same
+#: double-slash defect as the signed URL, one layer down, and just as fatal.
+SIGNED_DOWNLOAD_ROUTE_SUFFIX = "/storage/download"
+
+#: The two descriptions of the serving route must agree or every signed URL
+#: 404s, and nothing else in the codebase would notice. Checked at import so a
+#: change to either one fails here rather than in a client's browser. Read from
+#: the router so the check covers the prefix FastAPI actually mounts under.
+assert (
+    f"{router.prefix}{SIGNED_DOWNLOAD_ROUTE_SUFFIX}" == SIGNED_DOWNLOAD_ROUTE
+), (
+    "the signed artifact route declared by this router and the one the signer "
+    f"builds URLs from disagree: router "
+    f"{router.prefix + SIGNED_DOWNLOAD_ROUTE_SUFFIX!r} != signer {SIGNED_DOWNLOAD_ROUTE!r}"
+)
+
+
+@router.get(f"{SIGNED_DOWNLOAD_ROUTE_SUFFIX}/{{storage_key:path}}")
+async def stream_signed_artifact(
     storage_key: str,
+    request: Request,
     expires: int = Query(..., ge=1),
-    token: str = Query(..., min_length=16),
-    download_service: DownloadService = Depends(get_download_service)
+    token: str = Query(..., min_length=1, max_length=128),
+    download_service: DownloadService = Depends(get_download_service),
 ) -> StreamingResponse:
-    """Stream artifact download with signed URL verification."""
+    """Serve an artifact named by a signed URL.
+
+    This is the *second* half of a download, not the authorized half. It has no
+    session dependency on purpose: the HMAC token is the credential, it is
+    short-lived, and it is bound to this key, this verb and its own expiry, so it
+    cannot be redirected at another artifact. ``download_artifact`` above is what
+    authenticates the caller and decides whether they may have the file at all.
+
+    The response streams. Nothing here touches the filesystem: the key goes
+    through the service to the ``Storage`` port, which is the only thing that
+    knows that ``/app/storage`` is where artifacts live.
+    """
     await download_service.verify_token(
         storage_key=storage_key,
         expires=expires,
         token=token,
-        method="GET",
-        )
+        # The real verb, not a hardcoded "GET", so the signature is checked
+        # against the request that was actually made.
+        method=request.method,
+    )
+
     file_handle = await download_service.read_file(storage_key=storage_key)
-    
-    # Stream response — FastAPI handles chunking
-    filename = Path(storage_key).name or "artifact.bin"
-    
+
     return StreamingResponse(
-        content=file_handle,           # BinaryIO — FastAPI reads chunks
+        content=_iter_chunks(file_handle, chunk_size=STREAM_CHUNK_SIZE),
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": _content_disposition(storage_key),
+            # Short-lived bearer credential in the query string: never let it be
+            # cached or written to a referrer.
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
         },
+        # Runs once the body has been sent, including when the client hangs up
+        # mid-stream, so an abandoned download still releases its descriptor.
+        background=BackgroundTask(file_handle.close),
     )
+
+
+def _iter_chunks(file_handle: BinaryIO, *, chunk_size: int) -> Iterator[bytes]:
+    """Yield ``chunk_size`` blocks until the handle is exhausted.
+
+    A generator rather than the handle itself, so Starlette's ``iterate_in_threadpool``
+    pulls fixed-size blocks off disk instead of reading until newline.
+    """
+    try:
+        while chunk := file_handle.read(chunk_size):
+            yield chunk
+    finally:
+        file_handle.close()
+
+
+def _content_disposition(storage_key: str) -> str:
+    """Build a ``Content-Disposition`` header for the artifact's filename.
+
+    Only the final segment of the key is a filename; the rest is internal layout
+    and is not echoed to the client. Both the quoted and the RFC 5987 forms are
+    emitted because the quoted one cannot carry a non-ASCII name.
+    """
+    filename = PurePosixPath(storage_key).name or "artifact.bin"
+    # A quote or a newline in the filename would break out of the header value.
+    escaped = filename.replace('"', "").replace("\\", "").replace("\r", "").replace("\n", "")
+    ascii_fallback = escaped.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(escaped, safe='')}"

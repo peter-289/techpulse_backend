@@ -10,6 +10,7 @@ from app.modules.software_management.domain.ports.unit_of_work import SoftwareMa
 from app.modules.software_management.domain.ports.storage import (
     Storage,
     StorageFileNotFoundError,
+    StorageReadError,
     StorageSecurityError,
     StorageUnavailableError,
 )
@@ -17,12 +18,20 @@ from app.modules.shared.enums import ArtifactStatus
 
 from app.modules.software_management.domain.exceptions import (
     ArtifactNotFoundError,
+    ArtifactStorageUnreadableError,
+    ExpiredDownloadTokenError,
+    InvalidDownloadTokenError,
     SoftwareAccessDeniedError,
     SoftwareNotFoundError,
+    UnsafeStorageKeyError,
     VersionNotDownloadableError,
     VersionNotFoundError,
 )
-from app.modules.software_management.domain.ports.download_signer import DownloadSigner, SignedDownloadUrl
+from app.modules.software_management.domain.ports.download_signer import (
+    DownloadSigner,
+    SignedDownloadUrl,
+    TokenRejectionReason,
+)
 from app.modules.software_management.domain.value_objects import SemVer
 
 logger = logging.getLogger(__name__)
@@ -134,14 +143,31 @@ class DownloadService:
         token: str,
         method: str,
     ) -> bool:
-        if not self._url_signer.verify_token(
+        """Check a presented signed URL, or refuse it.
+
+        Cryptographic verification is the signer's job and authorization is not
+        performed here at all -- this endpoint is reachable without a session,
+        so the token *is* the credential. The signer reports which check failed
+        so an expired link and a tampered one do not both surface as one opaque
+        refusal.
+
+        Raises:
+            ExpiredDownloadTokenError: the signature is authentic but has lapsed.
+            InvalidDownloadTokenError: missing, malformed, forged, bound to a
+                different resource, or bound to a different method.
+        """
+        result = self._url_signer.verify_token(
             storage_key=storage_key,
             expires=expires,
             token=token,
             method=method,
-        ):
-            raise SoftwareAccessDeniedError("Invalid or expired download token")
-        return True
+        )
+        if result.valid:
+            return True
+
+        if result.reason is TokenRejectionReason.EXPIRED:
+            raise ExpiredDownloadTokenError("This download link has expired.")
+        raise InvalidDownloadTokenError("Invalid download token.")
 
     async def record_download(self, *, software_id: UUID, version_id: UUID | None = None) -> None:
         # No try/except around this transaction. The repository already maps
@@ -167,13 +193,40 @@ class DownloadService:
         logger.info("download_recorded software=%s version=%s", software_id, version_id)
 
     async def read_file(self, *, storage_key: str) -> BinaryIO:
+        """Open a stored artifact for streaming, through the Storage port.
+
+        Every storage failure is translated into its own domain error rather
+        than collapsed: the caller has to be able to answer 404 "no such
+        artifact" separately from 403 "that key is not addressable", 503 "storage
+        is down" and 500 "storage is up but the read failed".
+
+        raises:
+            ArtifactNotFoundError: the key is valid but no file is stored there.
+            UnsafeStorageKeyError: the token was authentic but the key it is bound
+                to is not addressable (traversal, absolute path, malformed). Kept
+                distinct from a bad token: nothing about the client's link was
+                wrong, so it must not be reported or logged as a bad link.
+            ArtifactStorageUnreadableError: the file exists but could not be
+                opened or read.
+            ExternalServiceError: storage itself is unavailable.
+        """
         try:
-            file_handle = await asyncio.to_thread(self._storage.open, storage_key=storage_key)
+            return await asyncio.to_thread(self._storage.open, storage_key=storage_key)
         except StorageFileNotFoundError as exc:
             raise ArtifactNotFoundError("Stored artifact not found.") from exc
         except StorageSecurityError as exc:
-            raise SoftwareAccessDeniedError("Invalid storage key.") from exc
+            # The signature was already verified against this exact key before
+            # storage was consulted, so reaching here means a genuine token names
+            # something the adapter will not resolve. That is a security event, not
+            # a client error, and it is logged as one.
+            logger.warning(
+                "artifact_storage_key_refused reason=%s", type(exc).__name__
+            )
+            raise UnsafeStorageKeyError("Storage key is not addressable.") from exc
         except StorageUnavailableError as exc:
             raise ExternalServiceError("Storage temporarily unavailable.") from exc
-
-        return file_handle
+        except StorageReadError as exc:
+            # The adapter's message can name the resolved filesystem path. It is
+            # logged here and never returned, so no storage layout escapes.
+            logger.warning("artifact_read_failed storage_error=%s", type(exc).__name__)
+            raise ArtifactStorageUnreadableError("Stored artifact could not be read.") from exc
