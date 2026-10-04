@@ -60,3 +60,6 @@ __pypackages__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Designs for the application.
+designs

@@ -49,7 +49,7 @@ class StorageSettings:
 
     backend_url: str
     storage_root: str
-    signing_secret: str
+  #  signing_secret: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,11 +136,11 @@ class HmacDownloadUrlSigner(DownloadSigner):
     def __init__(self, settings: DownloadUrlSignerSettings) -> None:
 
         self._settings = settings
-    
+
     def create_url(
-        self, 
-        *, 
-        storage_key: str,  
+        self,
+        *,
+        storage_key: str,
         method: str = "GET") -> SignedDownloadUrl:
             """ Generate a temporary signed download URL.
 
@@ -148,7 +148,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
              - the storage key
              - the HTTP method
              - an expiration timestamp
-       
+
             The URL itself conveys no authorization; callers are responsible for
             ensuring the requester is permitted to download the referenced object
             before invoking this method.
@@ -156,7 +156,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
             Args:
                storage_key:
                    Logical identifier of the stored object.
-       
+
                expires_in_seconds:
                    Lifetime of the signed URL.
 
@@ -173,7 +173,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
             _expiry_seconds = self._settings.default_expiry_seconds
             if _expiry_seconds <= 0:
                 raise ValueError("Expiration must be greater than zero seconds.")
-            
+
             key = self._validate_storage_key(storage_key=storage_key)
             method = self._normalize(method)
             expires_at = self._calculate_expiry(expires_in_seconds=_expiry_seconds)
@@ -226,11 +226,11 @@ class HmacDownloadUrlSigner(DownloadSigner):
              key = self._validate_storage_key(storage_key=storage_key)
          except ValueError:
              return False
-         
+
          method = self._normalize(method)
          if expires < int(time.time()):
                 return False
-         
+
          expires_at = datetime.fromtimestamp(expires, tz=UTC)
 
          # Rebuild payload
@@ -241,7 +241,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
          )
          expected = self._sign_payload(payload=payload)
          return self._constant_time_compare(expected, token)
-             
+
 
     # === HELPERS ===
     def _validate_storage_key(self, storage_key: str) -> str:
@@ -271,12 +271,12 @@ class HmacDownloadUrlSigner(DownloadSigner):
                If the storage key is malformed or unsafe.
         """
         return _validate_storage_key(storage_key)
-    
+
     def _calculate_expiry(self, expires_in_seconds: int) -> datetime:
         """Calculate the expiration timestamp for the signed URL."""
         return datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
 
-    def _build_payload(self, *, method: str, storage_key: str, expires_at: int  ) -> str:
+    def _build_payload(self, *, method: str, storage_key: str, expires_at: datetime  ) -> bytes:
         """Build the canonical payload used for signing."""
         payload = "\n".join(
             (
@@ -286,15 +286,15 @@ class HmacDownloadUrlSigner(DownloadSigner):
             )
         )
         return payload.encode("utf-8")
-    
-    def _sign_payload(self, payload: bytes)-> str:
+
+    def _sign_payload(self, payload: bytes)->str:
         """Generate an HMAC SHA-256 signed payload."""
         return hmac.new(
-            self._settings.signing_secret.encode("utf-8"), 
-            payload, 
+            self._settings.signing_secret.encode("utf-8"),
+            payload,
             hashlib.sha256).hexdigest()
 
-    def _build_url(self, *, storage_key: str, expires_at: int, token: str) -> str:
+    def _build_url(self, *, storage_key: str, expires_at: datetime, token: str) -> str:
         """Construct the full signed URL."""
         expires = int(expires_at.timestamp())
         return (
@@ -307,7 +307,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
     def _constant_time_compare(self, expected: str, provided: str)->bool:
         """Constant-time comparison to prevent timing attacks."""
         return hmac.compare_digest(expected, provided)
-    
+
     def _normalize(self, method: str) -> str:
         """Normalize an HTTP method"""
         return method.strip().upper()
@@ -639,4 +639,3 @@ class LocalStorage(Storage):
                     Path(tmp_path).unlink(missing_ok=True)
                 except OSError:
                     pass
-

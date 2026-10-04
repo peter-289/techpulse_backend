@@ -51,7 +51,7 @@ async def list_software(
    # print("CURRENT USER:", current_user)
     user_id = current_user.user_id
     items, _ = await service.list_visible(user_id=user_id, limit=limit)
-     
+
     return items, _
 
 
@@ -122,7 +122,7 @@ async def list_versions(
 ):
     try:
         versions = await service.list_versions(
-            software_id=software_id, 
+            software_id=software_id,
             user_id=_current_user.user_id,
             limit=limit,
             )
@@ -273,9 +273,9 @@ async def download_artifact(
     try:
         # Get client ip
         ip = abuse_protection.get_client_ip(request=request)
-        
+
         await abuse_protection.guard_download(ip=ip)
-        url = await service.download_artifact_url(
+        artifactURL = await service.download_artifact_url(
             software_id=software_id,
             version_number=version,
             artifact_id=artifact_id,
@@ -283,7 +283,7 @@ async def download_artifact(
         )
     except SoftwareDomainError as exc:
         raise http_error(exc) from exc
-    return RedirectResponse(url=url.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    return RedirectResponse(url=artifactURL.url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.get("/{software_id}/versions/{version}/download")
@@ -415,10 +415,10 @@ async def internal_storage_download(
         method="GET",
         )
     file_handle = await download_service.read_file(storage_key=storage_key)
-    
+
     # Stream response — FastAPI handles chunking
     filename = Path(storage_key).name or "artifact.bin"
-    
+
     return StreamingResponse(
         content=file_handle,           # BinaryIO — FastAPI reads chunks
         media_type="application/octet-stream",
