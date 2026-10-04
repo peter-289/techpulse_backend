@@ -28,6 +28,10 @@ from app.modules.software_management.domain.exceptions import (
     SoftwareNotPublishedError,
     VersionUnavailableError,
     DownloadDeniedError,
+    InvalidDownloadTokenError,
+    ExpiredDownloadTokenError,
+    ArtifactStorageUnreadableError,
+    UnsafeStorageKeyError,
     InvalidStateTransitionError,
     InvalidSemVerError,
     ArtifactIntegrityError,
@@ -159,6 +163,33 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DownloadDeniedError)
     async def _download_denied_handler(_request: Request, exc: DownloadDeniedError) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+    # A forged or malformed signed URL is refused, not "not found": answering 404
+    # would confirm whether the addressed resource exists. An authentic but lapsed
+    # one is 410 -- it is gone for good, and asking again for a fresh link works.
+    @app.exception_handler(InvalidDownloadTokenError)
+    async def _invalid_download_token_handler(_request: Request, exc: InvalidDownloadTokenError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+    @app.exception_handler(ExpiredDownloadTokenError)
+    async def _expired_download_token_handler(_request: Request, exc: ExpiredDownloadTokenError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_410_GONE, content={"detail": str(exc)})
+
+    # Also 403, but a separate handler and a separate error class from a forged
+    # token: the token here was authentic, so the refusal is about the key it
+    # names, and an operator reading the logs needs to be able to tell a probing
+    # request from a client with a stale link. Answering 403 rather than 404 keeps
+    # the same "do not confirm what exists" property.
+    @app.exception_handler(UnsafeStorageKeyError)
+    async def _unsafe_storage_key_handler(_request: Request, exc: UnsafeStorageKeyError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"detail": str(exc)})
+
+    # 500, not 503: storage answered, the read is what failed. ``detail`` is the
+    # generic message from the domain error, so the adapter's path-bearing text
+    # stays inside the process.
+    @app.exception_handler(ArtifactStorageUnreadableError)
+    async def _artifact_storage_unreadable_handler(_request: Request, exc: ArtifactStorageUnreadableError) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": str(exc)})
 
     @app.exception_handler(InvalidStateTransitionError)
     async def _invalid_state_transition_handler(_request: Request, exc: InvalidStateTransitionError) -> JSONResponse:

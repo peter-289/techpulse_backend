@@ -48,7 +48,6 @@ storage_settings = StorageSettings(
 )
 signer_settings = DownloadUrlSignerSettings(
     backend_url=settings.BACKEND_URL,
-    download_path=settings.STORAGE_DOWNLOAD_PATH,
     signing_secret=settings.SECRET_KEY,
     default_expiry_seconds=settings.URL_EXPIRY_MAX_SECONDS,
 )

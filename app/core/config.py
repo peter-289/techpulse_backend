@@ -184,7 +184,12 @@ class AppSettings(BaseSettings):
     PACKAGE_UPLOAD_RATE_WINDOW_SECONDS: int = 60
     PACKAGE_DOWNLOAD_RATE_LIMIT: int = 120
     PACKAGE_DOWNLOAD_RATE_WINDOW_SECONDS: int = 60
-    STORAGE_DOWNLOAD_PATH: str = ""
+    # The signed-artifact serving path is not configurable. It was, via
+    # STORAGE_DOWNLOAD_PATH, which defaulted to "" and so produced signed URLs of
+    # the shape http://host//software/... -- a target no route matched. The route
+    # itself is declared in software_router; keeping the two in one place means
+    # one constant, SIGNED_DOWNLOAD_ROUTE, instead of an env var that has to be
+    # kept in step with the decorator by hand.
     URL_EXPIRY_MAX_SECONDS: int = 900
 
     # Payments

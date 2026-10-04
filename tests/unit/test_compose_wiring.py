@@ -134,6 +134,72 @@ class TestWritableVolumes:
         dockerfile = DOCKERFILE_PATH.read_text()
         assert "USER appuser" in dockerfile
 
+    def test_the_upload_root_and_its_mount_are_the_same_directory(
+        self, compose: dict
+    ) -> None:
+        """Where artifacts are written, and where they are mounted, must be one path.
+
+        These are two separate keys in the compose file, and nothing in the
+        application connects them: ``UPLOAD_ROOT`` is read by ``LocalStorage`` and
+        the ``volumes:`` entry is read by Docker. If they drift apart the
+        container still starts, still passes every health check, and writes every
+        artifact into the container layer -- where they are silently destroyed the
+        next time the image is replaced. Nothing else in the suite would notice,
+        which is why it is asserted here.
+
+        This is the invariant behind "artifacts live at the persistent path": the
+        named volume is what makes them survive, and it only helps if the process
+        is actually writing to it.
+        """
+        api = compose["services"]["api"]
+        environment = api.get("environment", {})
+        mounts = [
+            mount
+            for mount in api.get("volumes", [])
+            if isinstance(mount, str) and mount.split(":")[0] == "api_storage"
+        ]
+
+        assert mounts, "the api_storage volume is no longer mounted on the api service"
+        assert len(mounts) == 1, f"api_storage is mounted more than once: {mounts}"
+
+        mount_path = mounts[0].split(":")[1]
+        upload_root = environment.get("UPLOAD_ROOT")
+
+        assert upload_root == mount_path, (
+            f"UPLOAD_ROOT is {upload_root!r} but api_storage is mounted at "
+            f"{mount_path!r}; artifacts would be written outside the volume and "
+            f"lost when the container is replaced"
+        )
+
+    def test_the_upload_root_is_where_the_adapter_actually_reads_from(self) -> None:
+        """``UPLOAD_ROOT`` is the only thing that decides the adapter's root, so
+        the setting name in compose and the one in config cannot drift apart
+        silently either."""
+        config = (ROOT / "app" / "core" / "config.py").read_text()
+        container = (ROOT / "app" / "modules" / "shared" / "container.py").read_text()
+
+        assert re.search(r"^\s*UPLOAD_ROOT\s*:", config, re.MULTILINE), (
+            "UPLOAD_ROOT is no longer declared in settings"
+        )
+        assert "storage_root=settings.UPLOAD_ROOT" in container, (
+            "the storage adapter is no longer rooted at settings.UPLOAD_ROOT"
+        )
+
+    def test_the_artifacts_volume_is_a_named_volume_not_a_host_path(
+        self, compose: dict
+    ) -> None:
+        """A bind mount would put artifacts on the host filesystem, whose
+        ownership and lifetime are the deployer's problem rather than Docker's."""
+        assert "api_storage" in compose.get("volumes", {}), (
+            "api_storage is not declared as a named volume"
+        )
+        for mount in compose["services"]["api"].get("volumes", []):
+            if isinstance(mount, str) and mount.startswith("api_storage:"):
+                source = mount.split(":")[0]
+                assert not source.startswith((".", "/", "~")), (
+                    f"artifacts are bind-mounted from {source!r} instead of a named volume"
+                )
+
 
 class TestSingleRootEnvFile:
     def test_every_interpolated_variable_is_declared(
