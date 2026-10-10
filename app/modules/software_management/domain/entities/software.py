@@ -25,6 +25,7 @@ from app.modules.software_management.domain.events import (
     VersionPublishedEvent,
     VersionRemovedEvent,
     VersionRevokedEvent,
+    VersionArchivedEvent,
 )
 
 def utc_now() -> datetime:
@@ -396,6 +397,21 @@ class Software(AggregateRoot):
         self._record_event(
             VersionRevokedEvent(
                 revoked_at=datetime.now(timezone.utc),
+                version_id=version_id,
+                software_id=self.id,
+                aggregate_id=self.id,
+                actor_id=self.owner_id,
+            )
+        )
+
+    def archive_version(self, version_id: UUID) -> None:
+        """Archive a released version without deleting its history or artifacts."""
+        self._ensure_modifiable()
+        self.get_version(version_id).archive()
+        self._touch()
+        self._record_event(
+            VersionArchivedEvent(
+                archived_at=datetime.now(timezone.utc),
                 version_id=version_id,
                 software_id=self.id,
                 aggregate_id=self.id,

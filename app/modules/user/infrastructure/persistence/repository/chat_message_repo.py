@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,7 +37,8 @@ class SQLAlchemyChatMessageRepository:
             raise ChatMessageRepositoryUnavailableError("Chat storage unavailable") from exc
         return to_domain(model)
 
-    async def list_for_user(self, user_id: str, limit: int = 25) -> list[ChatMessage]:
+    async def list_for_user(self, user_id: str | UUID, limit: int = 25) -> list[ChatMessage]:
+        user_id = str(user_id)
         # Newest first to apply the LIMIT to the most recent exchanges, then
         # reversed so the API returns them oldest first. Both the ordering and
         # the direction are part of the endpoint's contract.
@@ -52,3 +54,14 @@ class SQLAlchemyChatMessageRepository:
             logger.warning("Chat exchange listing failed: %s", exc, exc_info=True)
             raise ChatMessageRepositoryUnavailableError("Chat storage unavailable") from exc
         return [to_domain(model) for model in reversed(results.scalars().all())]
+
+    async def delete_for_user(self, message_id: int, user_id: str | UUID) -> None:
+        stmt = delete(ChatMessageModel).where(
+            ChatMessageModel.id == message_id,
+            ChatMessageModel.user_id == str(user_id),
+        )
+        try:
+            await self.db.execute(stmt)
+        except SQLAlchemyError as exc:
+            logger.warning("Chat exchange deletion failed: %s", exc, exc_info=True)
+            raise ChatMessageRepositoryUnavailableError("Chat storage unavailable") from exc

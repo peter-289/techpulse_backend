@@ -77,6 +77,7 @@ async def test_an_unconfigured_key_reports_unavailable_rather_than_raising_confi
 def test_is_configured_reflects_the_key() -> None:
     assert _config(api_key="k").is_configured is True
     assert _config(api_key="").is_configured is False
+    assert _config(api_key="   ").is_configured is False
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ from app.modules.software_management.infrastructure.persistence.mappers.software
     software_to_model,
 )
 from app.infrastructure.database.models.software import SoftwareModel, SoftwareVersionModel
-from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility
+from app.modules.shared.enums import SoftwareStatus, SoftwareVisibility, VersionStatus
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -244,8 +244,37 @@ class SQLAlchemySoftwareRepository(ISoftwareRepository):
                    ], total
             
            except SQLAlchemyError as exc:
-               logger.exception("Failed to list owned software by: %s, %s", owner_id, exc)
-               raise RepositoryUnavailableError(f"Failed to software for owner: {owner_id}")
+                logger.exception("Failed to list owned software by: %s, %s", owner_id, exc)
+                raise RepositoryUnavailableError(f"Failed to software for owner: {owner_id}")
+
+    async def summary_owned(self, owner_id: UUID) -> tuple[int, int, int, int]:
+        try:
+            stmt = (
+                select(
+                    func.count(func.distinct(SoftwareModel.id)),
+                    func.count(SoftwareVersionModel.id),
+                    func.count(SoftwareVersionModel.id).filter(
+                        SoftwareVersionModel.status == VersionStatus.PUBLISHED
+                    ),
+                    func.coalesce(func.sum(SoftwareVersionModel.download_count), 0),
+                )
+                .select_from(SoftwareModel)
+                .outerjoin(
+                    SoftwareVersionModel,
+                    SoftwareVersionModel.software_id == SoftwareModel.id,
+                )
+                .where(
+                    SoftwareModel.owner_id == str(owner_id),
+                    SoftwareModel.status != SoftwareStatus.DELETED,
+                )
+            )
+            row = (await self.session.execute(stmt)).one()
+            return tuple(int(value or 0) for value in row)
+        except SQLAlchemyError as exc:
+            logger.exception("Failed to summarize software for owner: %s", owner_id)
+            raise RepositoryUnavailableError(
+                f"Failed to summarize software for owner: {owner_id}"
+            ) from exc
       
     async def soft_delete(self, software_id: UUID, deleted_by: UUID | None = None) -> None:
           """

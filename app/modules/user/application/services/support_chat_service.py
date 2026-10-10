@@ -70,3 +70,10 @@ class SupportChatService:
             return await self.uow.chat_message_repo.list_for_user(
                 user_id=user_id, limit=limit
             )
+
+    async def delete_message(self, *, user_id: str, message_id: int) -> None:
+        async with self.uow:
+            await self.uow.chat_message_repo.delete_for_user(
+                message_id=message_id,
+                user_id=user_id,
+            )

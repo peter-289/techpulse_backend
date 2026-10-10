@@ -86,6 +86,12 @@ class VersionRevokedEvent(SoftwareDomainEvent):
     version_id: UUID
 
 @dataclass(frozen=True, slots=True)
+class VersionArchivedEvent(SoftwareDomainEvent):
+    archived_at: datetime
+    software_id: UUID
+    version_id: UUID
+
+@dataclass(frozen=True, slots=True)
 class VersionRemovedEvent(SoftwareDomainEvent):
     removed_at: datetime
     software_id: UUID

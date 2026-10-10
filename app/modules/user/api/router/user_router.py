@@ -1,9 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
-from typing import Optional
-from uuid import UUID
-
 from ...schema.user_schema import UserCreate, UserResponse, UserRead
 from ...application.services.user_service import UserService
 from app.infrastructure.database.unit_of_work import UnitOfWork
@@ -13,9 +10,7 @@ from app.modules.security.dependencies import (
     CurrentUser,
     get_abuse_protection,
     get_current_user,
-    require_role,
 )
-from app.modules.shared.enums import RoleEnum
 from app.modules.security.abuse_protection import AbuseProtection
 
 from app.exceptions.exceptions import DomainError
@@ -71,8 +66,6 @@ async def register_user(
     except DomainError as exc:
         logger.warning("Failed to queue verification email", extra={"user_id": user.id, "error": str(exc)})
     return user
-
-
 # Get my profile 
 @router.get("/users/me", response_model=UserRead, status_code=200)
 async def get_my_profile(
@@ -80,29 +73,5 @@ async def get_my_profile(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     user_id = current_user.user_id
-    user = await service.get_user_by_id(user_id=user_id)
-    return user
-
-
-# List users
-@router.get("/users", response_model=Optional[list[UserRead]], status_code=200)
-async def list_users(
-    limit: int = Query(100, ge=1, le=200),
-    before_id: str | None = Query(
-        None,
-        description="Keyset cursor: the user id to page before. Use the last id of the previous page.",
-    ),
-    service: UserService = Depends(get_service),
-    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
-):
-    return await service.list_users(limit=limit, before_id=before_id)
-
-# Get user by id
-@router.get("/users/{user_id}", response_model=UserRead, status_code=200)
-async def get_user(
-    user_id: UUID,
-    service: UserService = Depends(get_service),
-    _admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
-):
     user = await service.get_user_by_id(user_id=user_id)
     return user

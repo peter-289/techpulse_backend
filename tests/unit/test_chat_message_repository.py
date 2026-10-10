@@ -9,6 +9,7 @@ returns a list of the right length and would pass a naive assertion.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -112,6 +113,19 @@ async def test_listing_is_scoped_to_one_user(session) -> None:
 async def test_listing_for_an_unknown_user_is_an_empty_list(session) -> None:
     listed = await SQLAlchemyChatMessageRepository(session).list_for_user(user_id="nobody")
     assert listed == []
+
+
+@pytest.mark.asyncio
+async def test_listing_normalizes_uuid_user_ids_for_string_columns(session) -> None:
+    user_id = UUID("1da31c9c-ee2e-4fa6-9e3b-e2a94cbc5965")
+    await _seed(
+        session,
+        [ChatMessage.create(user_id=str(user_id), user_message="hello", assistant_message="hi")],
+    )
+
+    listed = await SQLAlchemyChatMessageRepository(session).list_for_user(user_id=user_id)
+
+    assert [message.user_message for message in listed] == ["hello"]
 
 
 def test_mapper_round_trips_the_role_as_a_string() -> None:

@@ -21,5 +21,6 @@ def get_support_ai() -> SupportAI:
             base_url=settings.AI_BASE_URL,
             api_key=settings.AI_API_KEY,
             model=settings.SUPPORT_CHAT_MODEL,
+            timeout_seconds=settings.AI_TIMEOUT_SECONDS,
         )
     )

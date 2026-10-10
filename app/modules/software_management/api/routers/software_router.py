@@ -8,6 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.software_management.domain.ports.download_signer import (
     SIGNED_DOWNLOAD_ROUTE,
@@ -16,7 +18,6 @@ from app.modules.security.dependencies import (
     CurrentUser,
     get_abuse_protection,
     get_current_user,
-    require_role,
 )
 from app.modules.software_management.dependencies import (
     get_artifact_stager,
@@ -26,8 +27,10 @@ from app.modules.software_management.dependencies import (
     upload_limits,
 )
 
-from app.modules.software_management.domain.exceptions import SoftwareDomainError
-from app.modules.shared.enums import RoleEnum, SoftwareVisibility
+from app.modules.software_management.domain.exceptions import SoftwareAccessDeniedError, SoftwareDomainError
+from app.modules.shared.enums import SoftwareVisibility
+from app.modules.shared.dependencies import get_db
+from app.infrastructure.database.models.software import SoftwareArtifactModel, SoftwareModel, SoftwareVersionModel
 from app.modules.software_management.schema.software_schema import (
     ArtifactResponse,
     SoftwareRead,
@@ -35,6 +38,7 @@ from app.modules.software_management.schema.software_schema import (
     SoftwareSummary,
     SoftwareUploadResponse,
     SoftwareVersionRead,
+    ArtifactBrowserResponse,
 )
 from app.modules.software_management.domain.ports.artifact_stager import ArtifactStager
 from app.modules.software_management.domain.value_objects import OwnedSoftwareCard, SemVer
@@ -44,6 +48,7 @@ from app.modules.software_management.application.services.software_service impor
 from app.modules.software_management.application.services.download_service import DownloadService
 from app.modules.software_management.application.services.search_service import SearchService
 from app.modules.security.abuse_protection import AbuseProtection
+from app.modules.security.application.services.scan_report_service import record_upload_scan_reports
 
 router = APIRouter(prefix="/api/v1/software-management", tags=["software-management"])
 
@@ -62,6 +67,101 @@ async def list_software(
     return items, _
 
 
+@router.get("/artifacts", response_model=list[ArtifactBrowserResponse])
+async def list_artifacts(
+    limit: int = Query(50, ge=1, le=200),
+    software_id: UUID | None = Query(None),
+    version_id: UUID | None = Query(None),
+    status: str | None = Query(None, max_length=32),
+    search: str | None = Query(None, max_length=120),
+    session: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[ArtifactBrowserResponse]:
+    statement = (
+        select(SoftwareArtifactModel, SoftwareVersionModel, SoftwareModel)
+        .join(SoftwareVersionModel, SoftwareVersionModel.id == SoftwareArtifactModel.version_id)
+        .join(SoftwareModel, SoftwareModel.id == SoftwareVersionModel.software_id)
+        .where(
+            SoftwareArtifactModel.status != "DELETED",
+            or_(
+                SoftwareModel.owner_id == str(current_user.user_id),
+                SoftwareModel.visibility == SoftwareVisibility.PUBLIC,
+            ),
+        )
+        .order_by(SoftwareArtifactModel.created_at.desc())
+        .limit(limit)
+    )
+    if software_id is not None:
+        statement = statement.where(SoftwareModel.id == str(software_id))
+    if version_id is not None:
+        statement = statement.where(SoftwareVersionModel.id == str(version_id))
+    if status:
+        statement = statement.where(SoftwareArtifactModel.status == status.upper())
+    if search:
+        pattern = f"%{search.strip()}%"
+        statement = statement.where(
+            or_(
+                SoftwareArtifactModel.file_name.ilike(pattern),
+                SoftwareModel.name.ilike(pattern),
+            )
+        )
+
+    result = await session.execute(statement)
+    return [
+        ArtifactBrowserResponse(
+            id=artifact.id,
+            artifact_id=artifact.id,
+            software_id=software.id,
+            software_name=software.name,
+            version_id=version.id,
+            version=version.version,
+            filename=artifact.file_name,
+            file_name=artifact.file_name,
+            size_bytes=artifact.size_bytes,
+            sha256=artifact.file_hash,
+            content_type=artifact.content_type,
+            status=artifact.status.lower(),
+            scan_status="completed" if artifact.status.upper() in {"ACTIVE", "QUARANTINED"} else "queued",
+            quarantine_reason=artifact.quarantine_reason,
+            created_at=artifact.created_at,
+            updated_at=artifact.updated_at,
+        )
+        for artifact, version, software in result.all()
+    ]
+
+
+@router.get("/summary", response_model=SoftwareSummary)
+async def software_summary(
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SoftwareSummary:
+    """Return workspace metrics for the authenticated user's software."""
+    total_packages, total_versions, published_versions, total_downloads = await service.summary_for_user(
+        current_user.user_id
+    )
+    return SoftwareSummary(
+        total_packages=total_packages,
+        total_versions=total_versions,
+        published_versions=published_versions,
+        total_downloads=total_downloads,
+    )
+
+
+@router.get("/{software_id}", response_model=SoftwareRead)
+async def get_software(
+    software_id: UUID,
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SoftwareRead:
+    try:
+        software = await service.get(software_id)
+        if not software.is_owned_by(current_user.user_id) and not software.is_public():
+            raise SoftwareAccessDeniedError("You do not have access to this software.")
+    except SoftwareDomainError as exc:
+        raise http_error(exc) from exc
+    return software_item(software, viewer_user_id=current_user.user_id)
+
+
 @router.post("/upload", response_model=SoftwareUploadResponse, status_code=status.HTTP_201_CREATED)
 # Upload software package
 async def upload_software_package(
@@ -72,10 +172,12 @@ async def upload_software_package(
     visibility: SoftwareVisibility = Form(SoftwareVisibility.PUBLIC),
     price_cents: int = Form(0),
     currency: str = Form("KES"),
+    release_notes: str = Form(""),
     files: list[UploadFile] = File(...),
     stager: ArtifactStager = Depends(get_artifact_stager),
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
 ) -> SoftwareUploadResponse:
     uploads = [
         stager.stage(file.file, file.filename or "package.bin", content_type=file.content_type, limits=upload_limits)
@@ -91,6 +193,7 @@ async def upload_software_package(
             visibility=SoftwareVisibility(visibility),
             price_cents=price_cents,
             currency=currency,
+            release_notes=release_notes,
             artifacts=uploads,
         )
     except SoftwareDomainError as exc:
@@ -98,6 +201,13 @@ async def upload_software_package(
     finally:
         for uploaded in uploads:
             stager.discard(uploaded)
+
+    await record_upload_scan_reports(
+        session,
+        software_id=software.id,
+        version_id=created_version.id,
+        artifacts=list(created_version.artifacts),
+    )
 
     return SoftwareUploadResponse(
         software_id=str(software.id),
@@ -147,6 +257,7 @@ async def upload_version(
     stager: ArtifactStager = Depends(get_artifact_stager),
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
 ) -> SoftwareVersionRead:
     uploads = [
         stager.stage(file.file, file.filename or "package.bin", content_type=file.content_type, limits=upload_limits)
@@ -166,7 +277,31 @@ async def upload_version(
     finally:
         for uploaded in uploads:
             stager.discard(uploaded)
+    await record_upload_scan_reports(
+        session,
+        software_id=created_version.software_id,
+        version_id=created_version.id,
+        artifacts=list(created_version.artifacts),
+    )
     return version_item(created_version)
+
+
+@router.get("/{software_id}/versions/{version}", response_model=SoftwareVersionRead)
+async def get_version(
+    software_id: UUID,
+    version: str,
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SoftwareVersionRead:
+    try:
+        item = await service.get_version(
+            software_id=software_id,
+            version_number=version,
+            user_id=current_user.user_id,
+        )
+    except SoftwareDomainError as exc:
+        raise http_error(exc) from exc
+    return version_item(item)
 
 
 @router.patch("/{software_id}/pricing", response_model=SoftwareRead)
@@ -227,6 +362,25 @@ async def revoke_version(
     except SoftwareDomainError as exc:
         raise http_error(exc) from exc
     return {"status": "revoked", "version": version}
+
+
+@router.post("/{software_id}/versions/{version}/archive", status_code=status.HTTP_202_ACCEPTED)
+async def archive_version(
+    software_id: UUID,
+    version: str,
+    service: SoftwareService = Depends(get_software_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, str]:
+    try:
+        await service.archive_version(
+            software_id=software_id,
+            version_number=version,
+            user_id=current_user.user_id,
+            is_admin=str(current_user.role).upper() == "ADMIN",
+        )
+    except SoftwareDomainError as exc:
+        raise http_error(exc) from exc
+    return {"status": "archived", "version": version}
 
 
 @router.get("/{software_id}/versions/{version}/artifacts", response_model=list[ArtifactResponse])
@@ -367,46 +521,6 @@ async def search(
     return {"items": [item.model_dump() for item in items], "scores": scores, "total": total, "limit": limit, "offset": offset}
 
 
-@router.get("/admin/packages", response_model=list[SoftwareRead])
-async def admin_packages(
-    limit: int = Query(100, ge=1, le=200),
-    service: SoftwareService = Depends(get_software_service),
-    admin: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
-) -> list[SoftwareRead]:
-    """List every package on the platform.
-
-    Goes through ``list_all`` rather than ``list_visible``. Both admin routes
-    previously called ``list_visible(user_id=admin.user_id)``, which asks "what does
-    this admin own" -- so the moderation view returned only the admin's own uploads,
-    and ``admin_summary`` then read ``.versions`` off the flat card that
-    ``list_visible`` returns and raised ``AttributeError``.
-    """
-    items = await service.list_all(limit=limit)
-    return [
-        software_item(item, viewer_user_id=admin.user_id).model_copy(update={"viewer_has_access": True})
-        for item in items
-    ]
-
-
-@router.get("/admin/summary", response_model=SoftwareSummary)
-async def admin_summary(
-    service: SoftwareService = Depends(get_software_service),
-    current_user: CurrentUser = Depends(require_role(RoleEnum.ADMIN)),
-) -> SoftwareSummary:
-    """Platform-wide counts for the admin dashboard.
-
-    Reads aggregates rather than cards: ``versions`` and ``download_count`` live on
-    the entity graph, not on the flat projection ``list_visible`` hands back.
-    """
-    items = await service.list_all(limit=200)
-    versions = [version for software in items for version in software.versions]
-    return SoftwareSummary(
-        total_packages=len(items),
-        total_versions=len(versions),
-        published_versions=sum(1 for version in versions if version.status.value == "published"),
-        total_downloads=sum(version.download_count for version in versions),
-    )
-
 #: Bytes read per iteration while streaming an artifact out of storage. Fixed
 #: rather than "iterate the file object": ``iter()`` on a binary file splits on
 #: newline, so an artifact with no newlines in it -- a PDF, an image, a zip --
@@ -469,12 +583,6 @@ async def stream_signed_artifact(
 
     file_handle = await download_service.read_file(storage_key=storage_key)
 
-<<<<<<< HEAD
-    # Stream response — FastAPI handles chunking
-    filename = Path(storage_key).name or "artifact.bin"
-
-=======
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
     return StreamingResponse(
         content=_iter_chunks(file_handle, chunk_size=STREAM_CHUNK_SIZE),
         media_type="application/octet-stream",

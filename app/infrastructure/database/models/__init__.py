@@ -4,5 +4,6 @@ from .chat_message import *
 from .resource import *
 from .session import *
 from .security_alert import *
+from .security_scan_report import *
 from .software import *
 from .user import *

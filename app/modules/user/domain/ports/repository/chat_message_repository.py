@@ -23,3 +23,7 @@ class ChatMessageRepository(Protocol):
     async def list_for_user(self, user_id: str, limit: int = 25) -> list[ChatMessage]:
         """Return a user's exchanges, oldest first, capped at ``limit``."""
         ...
+
+    async def delete_for_user(self, message_id: int, user_id: str) -> None:
+        """Delete one exchange only when it belongs to the supplied user."""
+        ...

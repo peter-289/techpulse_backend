@@ -102,6 +102,7 @@ class VersionStatus(StrEnum):
     PUBLISHED = "published"
     DEPRECATED = "deprecated"
     REVOKED = "revoked" 
+    ARCHIVED = "archived"
     DELETED = "deleted"
     
 

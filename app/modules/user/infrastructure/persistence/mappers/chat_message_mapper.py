@@ -22,7 +22,7 @@ def to_model(message: ChatMessage) -> ChatMessageModel:
     """Map a domain entity onto a database row."""
     return ChatMessageModel(
         id=message.id,
-        user_id=message.user_id,
+        user_id=str(message.user_id),
         role=message.role.value,
         user_message=message.user_message,
         assistant_message=message.assistant_message,

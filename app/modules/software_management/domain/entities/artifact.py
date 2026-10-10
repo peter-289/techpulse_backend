@@ -26,10 +26,15 @@ class Artifact:
     created_at: datetime
     updated_at: datetime
     quarantine_reason: str | None = None
+    scan_provider: str | None = None
+    scan_reference: str | None = None
+    scan_completed_at: datetime | None = None
 
     def __post_init__(self) -> None:
         self.created_at = _ensure_utc(self.created_at)
         self.updated_at = _ensure_utc(self.updated_at)
+        if self.scan_completed_at is not None:
+            self.scan_completed_at = _ensure_utc(self.scan_completed_at)
 
     def verify_integrity(self, computed_hash_sha256: str) -> None:
         if computed_hash_sha256 != self.sha256:

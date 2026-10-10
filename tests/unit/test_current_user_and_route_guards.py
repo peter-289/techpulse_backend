@@ -310,7 +310,7 @@ def test_admin_summary_route_requires_the_admin_role() -> None:
     route = next(
         route
         for route in main_module.app.routes
-        if getattr(route, "path", None) == "/api/v1/software-management/admin/summary"
+        if getattr(route, "path", None) == "/api/v1/admin/software/summary"
     )
     sub_dependencies = [
         dependency.call
@@ -325,13 +325,25 @@ def test_admin_summary_route_requires_the_admin_role() -> None:
     assert exc_info.value.status_code == 403
 
 
+def test_software_summary_route_requires_the_current_user() -> None:
+    import app.main as main_module
+
+    route = next(
+        route
+        for route in main_module.app.routes
+        if getattr(route, "path", None) == "/api/v1/software-management/summary"
+    )
+    dependency_calls = [dependency.call for dependency in route.dependant.dependencies]
+    assert get_current_user in dependency_calls
+
+
 def test_software_admin_packages_route_still_requires_admin() -> None:
     import app.main as main_module
 
     route = next(
         route
         for route in main_module.app.routes
-        if getattr(route, "path", None) == "/api/v1/software-management/admin/packages"
+        if getattr(route, "path", None) == "/api/v1/admin/software/packages"
     )
     sub_dependencies = [
         dependency.call

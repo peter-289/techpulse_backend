@@ -44,7 +44,6 @@ mail_config = MailConfig(
 storage_settings = StorageSettings(
     backend_url=settings.BACKEND_URL,
     storage_root=settings.UPLOAD_ROOT,
-    signing_secret=settings.SECRET_KEY,
 )
 signer_settings = DownloadUrlSignerSettings(
     backend_url=settings.BACKEND_URL,

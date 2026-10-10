@@ -94,6 +94,12 @@ class SoftwareArtifactModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     version: Mapped["SoftwareVersionModel"] = relationship(back_populates="artifacts", lazy="selectin")
+    scan_reports: Mapped[list["SecurityScanReportModel"]] = relationship(
+        back_populates="artifact",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="SecurityScanReportModel.requested_at.desc()",
+    )
 
 
 class SoftwareVersionModel(Base):

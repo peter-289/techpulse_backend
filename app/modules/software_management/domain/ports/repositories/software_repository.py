@@ -85,6 +85,10 @@ class ISoftwareRepository(Protocol):
         """
         ...
 
+    async def summary_owned(self, owner_id: UUID) -> tuple[int, int, int, int]:
+        """Return package, version, published-version, and download totals for an owner."""
+        ...
+
     async def soft_delete(self, software_id: UUID) -> None:
         """Mark as deleted."""
         ...

@@ -98,9 +98,20 @@ class Version:
     
     def revoke(self) -> None:
         """ Revoke a version"""
+        if self.status in {VersionStatus.DELETED, VersionStatus.ARCHIVED}:
+            raise InvalidStateTransitionError("Archived or deleted version cannot be revoked.")
         if self.status == VersionStatus.REVOKED:
             return
         self.status = VersionStatus.REVOKED
+        self._touch()
+
+    def archive(self) -> None:
+        """Retain a version historically while removing it from distribution."""
+        if self.status == VersionStatus.ARCHIVED:
+            return
+        if self.status in {VersionStatus.DRAFT, VersionStatus.DELETED}:
+            raise InvalidStateTransitionError("Only released versions can be archived.")
+        self.status = VersionStatus.ARCHIVED
         self._touch()
 
     def record_download(self) -> None:

@@ -172,3 +172,27 @@ def test_paid_download_requires_purchase() -> None:
         raise AssertionError("paid download should require a purchase")
 
     asyncio.run(run())
+
+
+def test_archived_version_is_retained_but_not_downloadable() -> None:
+    software = Software.create(
+        name="Archived Package",
+        description="Historical release",
+        owner_id=uuid4(),
+        visibility=SoftwareVisibility.PUBLIC,
+    )
+    version = Version(
+        id=uuid4(),
+        software_id=software.id,
+        number=SemVer.parse("1.0.0"),
+        release_notes="Release",
+        status=VersionStatus.PUBLISHED,
+        lock_version=0,
+    )
+    software.versions.append(version)
+
+    software.archive_version(version.id)
+
+    assert software.get_version(version.id) is version
+    assert version.status is VersionStatus.ARCHIVED
+    assert not version.is_downloadable()

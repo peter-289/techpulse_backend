@@ -212,14 +212,11 @@ class HmacDownloadUrlSigner(DownloadSigner):
              - the HTTP method
              - an expiration timestamp
 
-<<<<<<< HEAD
-=======
             Binding all three is what stops a valid token being replayed against
             a different artifact, a different verb, or after it expires. The key
             is part of the signed payload, so it cannot be swapped in the URL
             without invalidating the signature.
 
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
             The URL itself conveys no authorization; callers are responsible for
             ensuring the requester is permitted to download the referenced object
             before invoking this method.
@@ -227,12 +224,10 @@ class HmacDownloadUrlSigner(DownloadSigner):
             Args:
                storage_key:
                    Logical identifier of the stored object.
-<<<<<<< HEAD
+
 
                expires_in_seconds:
                    Lifetime of the signed URL.
-=======
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
 
                method:
                    HTTP method the signature is valid for.
@@ -284,73 +279,62 @@ class HmacDownloadUrlSigner(DownloadSigner):
         storage_key: str,
         expires: int,
         token: str,
-        method: str,
-        ) -> TokenVerification:
-         """Verify a signed download token.
+        method: str="GET",
+    ) -> TokenVerification:
+        """Verify a signed download token.
 
-          Returns:
-             A ``TokenVerification`` whose ``reason`` says *which* check failed.
-             A caller that only wants a yes/no answer can read ``valid``.
+        This performs cryptographic verification only. It does not check
+        whether the referenced file exists or whether the caller is
+        authorized to access it.
+        """
 
-          Notes:
-              This method performs cryptographic verification only.
-              It does not check whether the referenced file exists or whether
-              the caller is authorized to access it.
-          """
-         if not token or not token.strip():
+        # 1. Validate token presence.
+        if not token or not token.strip():
             return _rejected(TokenRejectionReason.MISSING)
 
-         if not _HEX_DIGITS.fullmatch(token):
-             return _rejected(TokenRejectionReason.MALFORMED)
+        # 2. Validate token format.
+        if not _HEX_DIGITS.fullmatch(token):
+            return _rejected(TokenRejectionReason.MALFORMED)
 
-         method = self._normalize(method)
-         if method not in SIGNED_DOWNLOAD_METHODS:
-             return _rejected(TokenRejectionReason.UNSUPPORTED_METHOD)
+        # 3. Normalize and validate HTTP method.
+        method = self._normalize(method)
 
-         try:
-             key = self._validate_storage_key(storage_key=storage_key)
-         except ValueError:
-<<<<<<< HEAD
-             return False
+        if method not in SIGNED_DOWNLOAD_METHODS:
+            return _rejected(TokenRejectionReason.UNSUPPORTED_METHOD)
 
-         method = self._normalize(method)
-         if expires < int(time.time()):
-                return False
+        # 4. Validate the storage key.
+        try:
+            key = self._validate_storage_key(storage_key=storage_key)
+        except ValueError:
+            return _rejected(TokenRejectionReason.INVALID_RESOURCE)
 
-         expires_at = datetime.fromtimestamp(expires, tz=UTC)
-=======
-             return _rejected(TokenRejectionReason.INVALID_RESOURCE)
+        # 5. Convert/validate expiry.
+        try:
+            expires_at = datetime.fromtimestamp(expires, tz=UTC)
+        except (TypeError, ValueError, OverflowError):
+            return _rejected(TokenRejectionReason.MALFORMED)
 
-         try:
-             expires_at = int(expires)
-         except (TypeError, ValueError):
-             return _rejected(TokenRejectionReason.MALFORMED)
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
+        # 6. Reconstruct exactly the payload that was signed.
+        payload = self._build_payload(
+            method=method,
+            storage_key=key,
+            expires_at=expires,
+        )
 
-         payload = self._build_payload(
-              method=method,
-              storage_key=key,
-              expires_at=expires_at,
-         )
-         expected = self._sign_payload(payload=payload)
-<<<<<<< HEAD
-         return self._constant_time_compare(expected, token)
+        # 7. Calculate expected signature.
+        expected = self._sign_payload(payload=payload)
 
-=======
-         if not self._constant_time_compare(expected, token):
-             return _rejected(TokenRejectionReason.SIGNATURE_MISMATCH)
+        # 8. Verify signature before checking expiry.
+        if not self._constant_time_compare(expected, token):
+            return _rejected(TokenRejectionReason.SIGNATURE_MISMATCH)
 
-         # Expiry last, so "expired" means what it says: this signature is
-         # authentic and has lapsed. Checking it first would let anyone holding no
-         # valid token at all distinguish "lapsed" from "forged" by picking an
-         # expiry in the past, and would misreport a forged token as expired --
-         # which is the one answer a client is entitled to act on by asking again.
-         if expires_at <= int(datetime.now(UTC).timestamp()):
-             return _rejected(TokenRejectionReason.EXPIRED)
+        # 9. Signature is authentic, now check whether it has expired.
+        if expires_at <= datetime.now(UTC):
+            return _rejected(TokenRejectionReason.EXPIRED)
 
-         return TokenVerification(valid=True)
-             
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
+        # 10. Everything passed.
+        return TokenVerification(valid=True)
+
 
     # === HELPERS ===
     def _validate_storage_key(self, storage_key: str) -> str:
@@ -382,19 +366,11 @@ class HmacDownloadUrlSigner(DownloadSigner):
         return _validate_storage_key(storage_key)
 
     def _calculate_expiry(self, expires_in_seconds: int) -> datetime:
-        """Calculate the expiration timestamp for the signed URL.
+        """Calculate the expiration timestamp for the signed URL."""
 
-<<<<<<< HEAD
-    def _build_payload(self, *, method: str, storage_key: str, expires_at: datetime  ) -> bytes:
-        """Build the canonical payload used for signing."""
-=======
-        Aware UTC, and truncated to whole seconds: the value is carried in a URL
-        query parameter and re-derived from that integer on verification, so a
-        sub-second remainder would sign a timestamp the verifier can never
-        reproduce.
-        """
         expiry = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
         return datetime.fromtimestamp(int(expiry.timestamp()), tz=UTC)
+
 
     def _build_payload(self, *, method: str, storage_key: str, expires_at: int) -> bytes:
         """Build the canonical payload used for signing.
@@ -402,7 +378,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
         ``expires_at`` is a Unix timestamp on both the signing and the verifying
         side, so the two always agree on the exact string that is authenticated.
         """
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
+
         payload = "\n".join(
             (
                 self._normalize(method=method),
@@ -412,6 +388,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
         )
         return payload.encode("utf-8")
 
+
     def _sign_payload(self, payload: bytes)->str:
         """Generate an HMAC SHA-256 signed payload."""
         return hmac.new(
@@ -419,17 +396,6 @@ class HmacDownloadUrlSigner(DownloadSigner):
             payload,
             hashlib.sha256).hexdigest()
 
-<<<<<<< HEAD
-    def _build_url(self, *, storage_key: str, expires_at: datetime, token: str) -> str:
-        """Construct the full signed URL."""
-        expires = int(expires_at.timestamp())
-        return (
-            f"{self._settings.backend_url.rstrip('/')}/"
-            f"{self._settings.download_path.strip('/')}/"
-            f"{quote(storage_key, safe='')}"
-            f"?expires={expires}&token={token}"
-        )
-=======
     def _build_url(self, *, storage_key: str, expires_at: int, token: str) -> str:
         """Construct the full signed URL for the artifact-serving route.
 
@@ -450,7 +416,7 @@ class HmacDownloadUrlSigner(DownloadSigner):
 
         path = _join_url_path(self._settings.download_path, _quote_storage_key_path(storage_key))
         return f"{base}{path}?expires={int(expires_at)}&token={token}"
->>>>>>> 49f27d24fd2e5b71445e9e49a600f58c7ca91a5c
+
 
     def _constant_time_compare(self, expected: str, provided: str)->bool:
         """Constant-time comparison to prevent timing attacks."""
@@ -459,8 +425,6 @@ class HmacDownloadUrlSigner(DownloadSigner):
     def _normalize(self, method: str) -> str:
         """Normalize an HTTP method"""
         return method.strip().upper()
-
-
 
 
 class LocalStorage(Storage):

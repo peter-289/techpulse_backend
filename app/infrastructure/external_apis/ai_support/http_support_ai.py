@@ -14,6 +14,7 @@ list and the ``output_text`` shape some providers use.
 from __future__ import annotations
 
 import logging
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -45,13 +46,21 @@ class HttpSupportAI:
             raise SupportAIUnavailableError("AI support service is not configured")
 
         url = f"{self._config.base_url.rstrip('/')}/chat/completions"
+        started_at = perf_counter()
+        logger.info(
+            "AI support request started | provider=%s | model=%s | question_chars=%s",
+            self._config.base_url,
+            self._config.model,
+            len(question),
+        )
         headers = {
-            "Authorization": f"Bearer {self._config.api_key}",
+            "Authorization": f"Bearer {self._config.api_key.strip()}",
             "Content-Type": "application/json",
         }
         payload = {
             "model": self._config.model,
             "temperature": 0.2,
+            "max_tokens": 500,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question},
@@ -68,9 +77,23 @@ class HttpSupportAI:
             ) as client:
                 response = await client.post(url, headers=headers, json=payload)
         except httpx.HTTPError as exc:
+            logger.warning(
+                "AI support request unavailable | provider=%s | model=%s | elapsed_ms=%s",
+                self._config.base_url,
+                self._config.model,
+                round((perf_counter() - started_at) * 1000),
+                exc_info=True,
+            )
             raise SupportAIUnavailableError("Failed to reach AI support service") from exc
 
         if response.status_code >= 400:
+            logger.warning(
+                "AI support provider returned an error | provider=%s | model=%s | status=%s | elapsed_ms=%s",
+                self._config.base_url,
+                self._config.model,
+                response.status_code,
+                round((perf_counter() - started_at) * 1000),
+            )
             raise SupportAIUnavailableError(
                 f"AI support service failed: {response.text[:_ERROR_BODY_LIMIT]}"
             )
@@ -88,7 +111,20 @@ class HttpSupportAI:
 
         content = _extract_assistant_content(data)
         if not content:
+            logger.warning(
+                "AI support provider returned no usable content | provider=%s | model=%s | elapsed_ms=%s",
+                self._config.base_url,
+                self._config.model,
+                round((perf_counter() - started_at) * 1000),
+            )
             raise SupportAIUnavailableError("AI support service returned an empty response")
+        logger.info(
+            "AI support request completed | provider=%s | model=%s | elapsed_ms=%s | reply_chars=%s",
+            self._config.base_url,
+            self._config.model,
+            round((perf_counter() - started_at) * 1000),
+            len(content),
+        )
         return content
 
 

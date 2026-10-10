@@ -57,7 +57,7 @@ class SupportAIConfig:
         the adapter reports the model as unavailable and the service falls back
         rather than raising a configuration exception.
         """
-        return bool(self.api_key)
+        return bool(self.api_key.strip())
 
 
 @runtime_checkable

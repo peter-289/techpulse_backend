@@ -75,7 +75,7 @@ class AppSettings(BaseSettings):
         extra="ignore",
     )
 
-    
+
     # Core
     DATABASE_URL_ASYNC: str = ""
     DATABASE_URL_SYNC: str = ""
@@ -84,7 +84,7 @@ class AppSettings(BaseSettings):
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 1800
-    
+
     # Logging/Audit
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str = "logs"
@@ -161,7 +161,7 @@ class AppSettings(BaseSettings):
     # Email
     EMAIL_FROM: str = "no-reply@techpulse.local"
     EMAIL_SUBJECT: str = "Welcome to Tech Pulse"
-    SMTP_HOST: str = "localhost"
+    SMTP_HOST: str = "mailhog"
     SMTP_PORT: int = 1025
     SMTP_USERNAME: str = ""
     SMTP_PASSWORD: str = ""
@@ -232,6 +232,7 @@ class AppSettings(BaseSettings):
     AI_BASE_URL: str = "https://api.openai.com/v1"
     WHISPER_MODEL: str = "whisper-1"
     SUPPORT_CHAT_MODEL: str = "gpt-4o-mini"
+    AI_TIMEOUT_SECONDS: float = 8.0
     TRANSCRIPTION_BASE_URL: str = ""
 
     # Startup superuser seeding
@@ -246,7 +247,7 @@ class AppSettings(BaseSettings):
     SUPERUSER_EMAIL: str = ""
     SUPERUSER_PASSWORD: str = ""
     SUPERUSER_UPDATE_PASSWORD_ON_STARTUP: bool = False
-    
+
     # Session cookies
     ACCESS_COOKIE_NAME: str = "tp_access"
     REFRESH_COOKIE_NAME: str = "tp_refresh"
@@ -287,7 +288,7 @@ class AppSettings(BaseSettings):
         self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").upper()
         self.LOG_DIR = _resolve_path(self.LOG_DIR, "logs")
         self.LOG_FILE_PATH = _resolve_path(self.LOG_FILE_PATH, str(Path(self.LOG_DIR) / "app.log"))
-        
+
         # Backend URL/ upload root & package storage backend
         self.BACKEND_URL = (self.BACKEND_URL or self.BASE_URL or "http://127.0.0.1:8000").strip()
         self.UPLOAD_ROOT = _resolve_path(self.UPLOAD_ROOT, "storage")
@@ -295,7 +296,7 @@ class AppSettings(BaseSettings):
 
         # Payment provider
         self.PAYMENT_PROVIDER = (self.PAYMENT_PROVIDER or "manual").lower()
-        
+
         # Mail management
         self.SMTP_HOST = _normalize_smtp_host(self.SMTP_HOST)
 

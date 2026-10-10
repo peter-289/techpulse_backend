@@ -102,6 +102,10 @@ class SoftwareService:
         async with self._uow.read_only():
             return await self._uow.software_repo.list_all(limit=limit, offset=offset)
 
+    async def summary_for_user(self, user_id: UUID) -> tuple[int, int, int, int]:
+        async with self._uow.read_only():
+            return await self._uow.software_repo.summary_owned(user_id)
+
     async def get(self, software_id: UUID) -> Software:
         """Load a software aggregate by id.
 
@@ -125,8 +129,16 @@ class SoftwareService:
             software = await self._uow.software_repo.get(software_id=software_id)
         if software is None:
             raise SoftwareNotFoundError("Software not found.")
+        if not software.is_owned_by(user_id) and not software.is_public():
+            raise SoftwareAccessDeniedError("You do not have access to this software.")
 
         return list(software.versions[:limit])
+
+    async def get_version(self, *, software_id: UUID, version_number: str, user_id: UUID) -> Version:
+        software = await self.get(software_id)
+        if not software.is_owned_by(user_id) and not software.is_public():
+            raise SoftwareAccessDeniedError("You do not have access to this software.")
+        return software.get_version_by_semver(SemVer.parse(version_number))
 
     async def upload_package(
         self,
@@ -140,6 +152,7 @@ class SoftwareService:
         price_cents: int = 0,
         currency: str = "KES",
         artifacts: Sequence[ArtifactUpload],
+        release_notes: str = "",
     ) -> tuple[Software, Version]:
         """Create a software package together with its first version.
 
@@ -176,7 +189,7 @@ class SoftwareService:
             id=uuid4(),
             software_id=software.id,
             number=SemVer.parse(version_number),
-            release_notes="Initial upload",
+            release_notes=release_notes.strip() or "Initial upload",
             status=VersionStatus.DRAFT,
             lock_version=0,
         )
@@ -414,6 +427,26 @@ class SoftwareService:
         await self._dispatch_events(software)
         return version
 
+    async def archive_version(
+        self,
+        *,
+        software_id: UUID,
+        version_number: str,
+        user_id: UUID,
+        is_admin: bool = False,
+    ) -> Version:
+        software = await self.require_owner(
+            software_id=software_id,
+            user_id=user_id,
+            is_admin=is_admin,
+        )
+        version = software.get_version_by_semver(SemVer.parse(version_number))
+        software.archive_version(version.id)
+        async with self._uow:
+            await self._uow.software_repo.save(software)
+        await self._dispatch_events(software)
+        return version
+
     async def has_purchase(self, *, software_id: UUID, user_id: UUID) -> bool:
         async with self._uow.read_only():
             return await self._uow.software_repo.has_purchase(software_id=software_id, user_id=user_id)
@@ -456,6 +489,9 @@ class SoftwareService:
             status=ArtifactStatus.ACTIVE,
             created_at=version.created_at,
             updated_at=version.updated_at,
+            scan_provider=scan.provider,
+            scan_reference=scan.reference,
+            scan_completed_at=version.updated_at,
         )
         return artifact
 

@@ -11,8 +11,9 @@ def test_software_management_contract_routes_are_registered() -> None:
     assert "/api/v1/software-management/{software_id}/versions/{version}/artifacts/{artifact_id}/download" in paths
     assert "/api/v1/software-management/{software_id}/versions/{version}/download" in paths
     assert "/api/v1/software-management/{software_id}/pricing" in paths
-    assert "/api/v1/software-management/admin/packages" in paths
-    assert "/api/v1/software-management/admin/summary" in paths
+    assert "/api/v1/software-management/summary" in paths
+    assert "/api/v1/admin/software/packages" in paths
+    assert "/api/v1/admin/software/summary" in paths
 
 if __name__ == "__main__":
     test_software_management_contract_routes_are_registered()

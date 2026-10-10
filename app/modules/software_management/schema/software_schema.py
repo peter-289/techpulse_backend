@@ -66,6 +66,19 @@ class ArtifactResponse(BaseModel):
     }
 
 
+class ArtifactBrowserResponse(ArtifactResponse):
+    artifact_id: UUID
+    software_id: UUID
+    software_name: str
+    version_id: UUID
+    version: SemVer
+    file_name: str
+    scan_status: str
+    quarantine_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class SoftwareUploadResponse(BaseModel):
     software_id: str
     version_id: str

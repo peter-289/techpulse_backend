@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.unit_of_work import UnitOfWork
@@ -38,7 +38,7 @@ async def send_message(
     service: SupportChatService = Depends(get_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    message = await service.ask(user_id=current_user.user_id, message=payload.message)
+    message = await service.ask(user_id=str(current_user.user_id), message=payload.message)
     return {"message_id": message.id, "assistant_reply": message.assistant_message}
 
 
@@ -48,4 +48,16 @@ async def list_messages(
     service: SupportChatService = Depends(get_service),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    return await service.list_messages(user_id=current_user.user_id, limit=limit)
+    return await service.list_messages(user_id=str(current_user.user_id), limit=limit)
+
+
+@router.delete("/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_message(
+    message_id: int,
+    service: SupportChatService = Depends(get_service),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> None:
+    await service.delete_message(
+        user_id=str(current_user.user_id),
+        message_id=message_id,
+    )
