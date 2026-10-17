@@ -44,6 +44,10 @@ class UserRepository(Protocol):
         """Return the account with this email, or ``None``."""
         ...
 
+    async def count_admins(self) -> int:
+        """Return the number of administrator accounts."""
+        ...
+
     async def list_users(self, limit: int = 100, before_id: str | None = None) -> list[User]:
         """Return a page of accounts ordered by id, newest id first.
 

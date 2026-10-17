@@ -91,6 +91,14 @@ class User:
         """
         self.status = UserStatus.VERIFIED
 
+    def suspend(self) -> None:
+        """Disable account access while retaining the account record."""
+        self.status = UserStatus.SUSPENDED
+
+    def reinstate(self) -> None:
+        """Restore an account to the verified state."""
+        self.status = UserStatus.VERIFIED
+
     # === credentials ===
 
     def apply_verified_password_hash(self, verified_hash: str) -> bool:

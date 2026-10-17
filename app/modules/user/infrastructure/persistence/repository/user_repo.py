@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +26,7 @@ from app.modules.user.infrastructure.persistence.mappers.user_mapper import (
     to_domain,
     to_model,
 )
-from app.modules.shared.enums import UserStatus
+from app.modules.shared.enums import RoleEnum, UserStatus
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,13 @@ class SQLAlchemyUserRepository:
     async def get_user_by_email(self, email: str) -> User | None:
         stmt = select(UserModel).where(UserModel.email == email)
         return to_domain_or_none(await self._one(stmt))
+
+    async def count_admins(self) -> int:
+        try:
+            return int(await self.db.scalar(select(func.count()).select_from(UserModel).where(UserModel.role == RoleEnum.ADMIN)) or 0)
+        except SQLAlchemyError as exc:
+            logger.warning("Administrator count failed: %s", exc, exc_info=True)
+            raise UserRepositoryUnavailableError("User storage unavailable") from exc
 
     async def list_users(self, limit: int = 100, before_id: str | None = None) -> list[User]:
         """Return a page of accounts, highest id first.

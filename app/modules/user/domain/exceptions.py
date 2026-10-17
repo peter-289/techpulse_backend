@@ -22,6 +22,10 @@ class UserNotFoundError(UserDomainError):
     """No account exists for the requested id."""
 
 
+class InvalidAdminUserChangeError(UserDomainError):
+    """An administrator change violates account safety rules."""
+
+
 class DuplicateUserError(UserDomainError):
     """The username or email is already registered."""
 

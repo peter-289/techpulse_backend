@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 
-from app.modules.shared.enums import GenderEnum, RoleEnum
+from app.modules.shared.enums import GenderEnum, RoleEnum, UserStatus
     
 
 class UserBase(BaseModel):
@@ -31,6 +31,7 @@ class UserRead(UserBase):
     id: str
     created_at: Optional[datetime]
     role: RoleEnum
+    status: UserStatus
     
     model_config = ConfigDict(
         from_attributes=True,

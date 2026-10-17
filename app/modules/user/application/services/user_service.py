@@ -21,7 +21,7 @@ from app.modules.security.abuse_protection import AbuseProtection
 from app.modules.security.password_manager import hash_password
 from app.modules.user.application.services.rules import validate_password_strength
 from app.modules.user.domain.entities.user import User
-from app.modules.user.domain.exceptions import UserNotFoundError
+from app.modules.user.domain.exceptions import InvalidAdminUserChangeError, UserNotFoundError
 from app.modules.user.domain.ports.unit_of_work import UserUnitOfWork
 from app.modules.shared.enums import GenderEnum, RoleEnum, UserStatus
 
@@ -104,6 +104,35 @@ class UserService:
             if not user:
                 raise UserNotFoundError("User not found.")
             return user
+
+    async def update_admin_user(
+        self,
+        *,
+        user_id: UUID,
+        actor_user_id: UUID,
+        status: UserStatus | None = None,
+        role: RoleEnum | None = None,
+    ) -> User:
+        """Apply a validated administrative account change safely."""
+        async with self.uow:
+            user = await self.uow.user_repo.get_user_by_id(str(user_id))
+            if user is None:
+                raise UserNotFoundError("User not found.")
+            if status is UserStatus.SUSPENDED and user_id == actor_user_id:
+                raise InvalidAdminUserChangeError("Administrators cannot suspend their own account.")
+            if role is not None and role is not user.role and user.role is RoleEnum.ADMIN:
+                if await self.uow.user_repo.count_admins() <= 1:
+                    raise InvalidAdminUserChangeError("The last administrator cannot be demoted.")
+
+            if status is UserStatus.SUSPENDED:
+                user.suspend()
+            elif status is UserStatus.VERIFIED:
+                user.reinstate()
+            elif status is not None:
+                user.status = status
+            if role is not None:
+                user.role = role
+            return await self.uow.user_repo.save(user)
 
     async def ensure_superuser(
         self,
