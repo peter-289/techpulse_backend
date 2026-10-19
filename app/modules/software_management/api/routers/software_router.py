@@ -60,7 +60,7 @@ async def list_software(
     service: SoftwareService = Depends(get_software_service),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> tuple[list[OwnedSoftwareCard], int]:
-   # print("CURRENT USER:", current_user)
+
     user_id = current_user.user_id
     items, _ = await service.list_visible(user_id=user_id, limit=limit)
 

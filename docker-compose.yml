@@ -161,26 +161,10 @@ services:
   # Local development only, behind the `dev` profile. The password is read
   # from the root .env and is never committed; a value committed here before
   # was leaked into git history at 241f483.
-  pgadmin:
-    image: elestio/pgadmin
-    container_name: techpulse-pgadmin
-    restart: unless-stopped
-    profiles: ["dev"]
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-}
-    ports:
-      - "${PGADMIN_HOST_PORT:-5050}:80"
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    logging: *default-logging
+
 
 volumes:
   postgres_data:
   redis_data:
   api_storage:
   api_logs:
-  pgadmin_data:
